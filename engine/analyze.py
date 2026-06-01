@@ -64,7 +64,7 @@ class Analyzer:
 
     def analyze(self, board: chess.Board, multipv: int = 3,
                 simulations: int | None = None) -> Analysis:
-        if board.is_game_over():
+        if board.is_game_over(claim_draw=self.cfg.mcts.claim_draw):
             return Analysis(board.fen(), value_to_cp(self.mcts._terminal_value(board)),
                             0.0, None, None, 0, None, [])
 

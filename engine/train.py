@@ -11,7 +11,7 @@ import argparse
 import os
 import random
 import time
-from collections import deque
+from collections import Counter, deque
 from dataclasses import asdict
 
 import numpy as np
@@ -58,14 +58,16 @@ def save_checkpoint(net: ChessNet, cfg: Config, path: str, iteration: int = 0) -
 
 
 def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int,
-                 pl: float, vl: float, dt: float) -> None:
+                 pl: float, vl: float, dt: float,
+                 termination_counts: dict[str, int]) -> None:
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = os.path.join(ckpt_dir, "metrics.csv")
     new = not os.path.exists(path)
+    terminations = ";".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
     with open(path, "a", encoding="utf-8") as f:
         if new:
-            f.write("iter,sims,samples,policy_loss,value_loss,seconds\n")
-        f.write(f"{it},{sims},{samples},{pl:.4f},{vl:.4f},{dt:.1f}\n")
+            f.write("iter,sims,samples,policy_loss,value_loss,seconds,terminations\n")
+        f.write(f"{it},{sims},{samples},{pl:.4f},{vl:.4f},{dt:.1f},{terminations}\n")
 
 
 def main() -> None:
@@ -133,14 +135,16 @@ def main() -> None:
 
         t0 = time.time()
         new_samples = 0
+        termination_counts: Counter[str] = Counter()
         n_games = cfg.train.games_per_iteration
         game_bar = tqdm(range(n_games), desc=f"iter {it} self-play",
                         unit="game", leave=False)
         for _ in game_bar:
-            samples = play_game(evaluator, cfg, simulations=sims)
-            buffer.extend(samples)
-            new_samples += len(samples)
-            game_bar.set_postfix(moves=len(samples), buffer=len(buffer))
+            game = play_game(evaluator, cfg, simulations=sims)
+            buffer.extend(game.samples)
+            new_samples += len(game.samples)
+            termination_counts[game.termination] += 1
+            game_bar.set_postfix(moves=len(game.samples), buffer=len(buffer))
 
         net.train()
         p_losses, v_losses = [], []
@@ -163,10 +167,13 @@ def main() -> None:
         dt = time.time() - t0
         pl = np.mean(p_losses) if p_losses else float("nan")
         vl = np.mean(v_losses) if v_losses else float("nan")
+        term_summary = ", ".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
         print(f"iter {it:3d} | sims {sims:3d} | games {cfg.train.games_per_iteration} "
               f"| samples {new_samples:4d} | buffer {len(buffer):6d} "
-              f"| policy_loss {pl:.3f} | value_loss {vl:.3f} | {dt:.1f}s", flush=True)
-        _log_metrics(cfg.train.checkpoint_dir, it, sims, new_samples, pl, vl, dt)
+              f"| policy_loss {pl:.3f} | value_loss {vl:.3f} | ends {term_summary} "
+              f"| {dt:.1f}s", flush=True)
+        _log_metrics(cfg.train.checkpoint_dir, it, sims, new_samples, pl, vl, dt,
+                     dict(termination_counts))
 
 
 if __name__ == "__main__":

@@ -111,6 +111,8 @@ class MCTS:
             add_noise: bool = False) -> SearchResult:
         sims = simulations if simulations is not None else self.cfg.simulations
         root = _Node(0.0)
+        if self._is_terminal(board):
+            return self._collect(root, board, self._terminal_value(board))
         root_value = self._expand(root, board)
 
         if add_noise and root.children:
@@ -121,7 +123,7 @@ class MCTS:
             sim_board = board.copy()
             path = [root]
 
-            while node.expanded and not sim_board.is_game_over():
+            while node.expanded and not self._is_terminal(sim_board):
                 idx, child = self._select_child(node)
                 move = index_to_move(idx, sim_board)
                 if move is None:  # safety: should not happen post round-trip test
@@ -130,7 +132,7 @@ class MCTS:
                 node = child
                 path.append(node)
 
-            if sim_board.is_game_over():
+            if self._is_terminal(sim_board):
                 value = self._terminal_value(sim_board)
             else:
                 value = self._expand(node, sim_board)
@@ -164,9 +166,14 @@ class MCTS:
             child = root.children[i]
             child.prior = (1 - eps) * child.prior + eps * float(n)
 
-    @staticmethod
-    def _terminal_value(board: chess.Board) -> float:
-        if board.is_checkmate():
+    def _is_terminal(self, board: chess.Board) -> bool:
+        # claim_draw=True is costlier per node, but keeps search aligned with
+        # self-play and avoids overvaluing claimable repetition/50-move draws.
+        return board.is_game_over(claim_draw=self.cfg.claim_draw)
+
+    def _terminal_value(self, board: chess.Board) -> float:
+        outcome = board.outcome(claim_draw=self.cfg.claim_draw)
+        if outcome is not None and outcome.termination == chess.Termination.CHECKMATE:
             return -1.0  # side to move has been mated
         return 0.0       # stalemate / draw
 

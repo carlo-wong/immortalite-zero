@@ -32,10 +32,11 @@ def main() -> None:
 
     # 2. A short self-play game completes and produces value-labelled samples.
     cfg.train.max_game_moves = 12
-    samples = play_game(evaluator, cfg, simulations=16)
-    assert len(samples) > 0
-    assert all(s.value in (-1.0, 1.0) or abs(s.value) <= 1.0 for s in samples)
-    print(f"self-play produced {len(samples)} samples; final value {samples[-1].value}")
+    game = play_game(evaluator, cfg, simulations=16)
+    assert len(game.samples) > 0
+    assert all(s.value in (-1.0, 1.0) or abs(s.value) <= 1.0 for s in game.samples)
+    print(f"self-play produced {len(game.samples)} samples; "
+          f"termination={game.termination}; final value {game.samples[-1].value}")
 
     # 3. Analyzer yields eval, best vs beautiful, and candidate lines.
     analyzer = Analyzer(None, cfg)

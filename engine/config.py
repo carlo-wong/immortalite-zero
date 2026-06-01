@@ -23,6 +23,9 @@ class MCTSConfig:
     gumbel_c_visit: float = 50.0
     gumbel_c_scale: float = 1.0
     gumbel_considered: int = 16     # top-k root actions considered each move
+    # claim_draw=True catches threefold/50-move draws inside search, but is
+    # a bit more expensive than plain terminal checks.
+    claim_draw: bool = True
 
 
 @dataclass
