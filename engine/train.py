@@ -94,10 +94,10 @@ def main() -> None:
         cfg.train.train_steps_per_iteration = 80
         cfg.train.sims_start, cfg.train.sims_end = 24, 60
     if args.gpu:
-        cfg.net.blocks, cfg.net.filters = 10, 128
-        cfg.train.games_per_iteration = 40
-        cfg.train.train_steps_per_iteration = 400
-        cfg.train.sims_start, cfg.train.sims_end = 60, 160
+        cfg.net.blocks, cfg.net.filters = 8, 96
+        cfg.train.games_per_iteration = 12
+        cfg.train.train_steps_per_iteration = 300
+        cfg.train.sims_start, cfg.train.sims_end = 48, 128
     if args.games is not None:
         cfg.train.games_per_iteration = args.games
     if args.train_steps is not None:
@@ -132,10 +132,14 @@ def main() -> None:
 
         t0 = time.time()
         new_samples = 0
-        for _ in range(cfg.train.games_per_iteration):
+        n_games = cfg.train.games_per_iteration
+        for g in range(n_games):
             samples = play_game(evaluator, cfg, simulations=sims)
             buffer.extend(samples)
             new_samples += len(samples)
+            print(f"  [iter {it}] self-play game {g + 1}/{n_games} "
+                  f"({len(samples)} moves, buffer {len(buffer)}, "
+                  f"{time.time() - t0:.0f}s)", flush=True)
 
         net.train()
         p_losses, v_losses = [], []
