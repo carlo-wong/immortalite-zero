@@ -17,6 +17,7 @@ from dataclasses import asdict
 import numpy as np
 import torch
 import torch.nn.functional as F
+from tqdm.auto import tqdm
 
 from .config import Config, NetConfig
 from .network import ChessNet, NetEvaluator
@@ -133,22 +134,25 @@ def main() -> None:
         t0 = time.time()
         new_samples = 0
         n_games = cfg.train.games_per_iteration
-        for g in range(n_games):
+        game_bar = tqdm(range(n_games), desc=f"iter {it} self-play",
+                        unit="game", leave=False)
+        for _ in game_bar:
             samples = play_game(evaluator, cfg, simulations=sims)
             buffer.extend(samples)
             new_samples += len(samples)
-            print(f"  [iter {it}] self-play game {g + 1}/{n_games} "
-                  f"({len(samples)} moves, buffer {len(buffer)}, "
-                  f"{time.time() - t0:.0f}s)", flush=True)
+            game_bar.set_postfix(moves=len(samples), buffer=len(buffer))
 
         net.train()
         p_losses, v_losses = [], []
         if len(buffer) >= cfg.train.batch_size:
-            for _ in range(cfg.train.train_steps_per_iteration):
+            train_bar = tqdm(range(cfg.train.train_steps_per_iteration),
+                             desc=f"iter {it} train", unit="step", leave=False)
+            for _ in train_bar:
                 batch = random.sample(buffer, cfg.train.batch_size)
                 pl, vl = train_step(net, optimizer, batch, args.device)
                 p_losses.append(pl)
                 v_losses.append(vl)
+                train_bar.set_postfix(p=f"{pl:.3f}", v=f"{vl:.3f}")
         net.eval()
 
         save_checkpoint(net, cfg, os.path.join(cfg.train.checkpoint_dir, "latest.pt"), it)

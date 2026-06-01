@@ -2,6 +2,7 @@
 python-chess>=1.999
 numpy>=1.24
 torch>=2.0          # CPU build is fine; Colab provides CUDA build
+tqdm>=4.65          # training progress bars
 
 # Analysis server
 fastapi>=0.110
