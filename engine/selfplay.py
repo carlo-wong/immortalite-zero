@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable, Generator
 
 import chess
 import numpy as np
@@ -40,15 +41,30 @@ _DRAW_TERMINATION_NAMES = {
 _DRAW_TERMINATION_SET = set(_DRAW_TERMINATION_NAMES.values())
 
 
-def play_game(evaluator: NetEvaluator, cfg: Config, simulations: int) -> GameResult:
+@dataclass
+class _ActiveGame:
+    gen: Generator[chess.Board, tuple[np.ndarray, float], GameResult]
+    pending_board: chess.Board
+
+
+def play_game_gen(cfg: Config, simulations: int
+                  ) -> Generator[chess.Board, tuple[np.ndarray, float], GameResult]:
     board = chess.Board()
-    mcts = MCTS(evaluator, cfg.mcts)
+    mcts = MCTS(None, cfg.mcts)
     samples: list[Sample] = []
     move_count = 0
     no_legal_moves = False
 
     while not board.is_game_over(claim_draw=True) and move_count < cfg.train.max_game_moves:
-        result = mcts.run(board, simulations=simulations, add_noise=True)
+        search = mcts.search_gen(board, simulations=simulations, add_noise=True)
+        req = next(search)
+        while True:
+            logits, value = yield req
+            try:
+                req = search.send((logits, value))
+            except StopIteration as stop:
+                result = stop.value
+                break
         if not result.moves:
             no_legal_moves = True
             break
@@ -74,6 +90,55 @@ def play_game(evaluator: NetEvaluator, cfg: Config, simulations: int) -> GameRes
                                       no_legal_moves=no_legal_moves)
     _assign_values(samples, outcome, termination, cfg, move_count)
     return GameResult(samples=samples, termination=termination)
+
+
+def play_game(evaluator: NetEvaluator, cfg: Config, simulations: int) -> GameResult:
+    gen = play_game_gen(cfg, simulations)
+    req = next(gen)
+    while True:
+        logits, value = evaluator.evaluate(req)
+        try:
+            req = gen.send((logits, value))
+        except StopIteration as stop:
+            return stop.value
+
+
+def play_games_batched(evaluator: NetEvaluator, cfg: Config, simulations: int,
+                       num_games: int, concurrency: int,
+                       on_game_finished: Callable[[GameResult], None] | None = None
+                       ) -> list[GameResult]:
+    if num_games <= 0:
+        return []
+    if concurrency <= 0:
+        raise ValueError("concurrency must be >= 1")
+
+    active: list[_ActiveGame] = []
+    launched = 0
+    completed: list[GameResult] = []
+
+    while len(completed) < num_games:
+        while launched < num_games and len(active) < concurrency:
+            gen = play_game_gen(cfg, simulations)
+            active.append(_ActiveGame(gen=gen, pending_board=next(gen)))
+            launched += 1
+
+        boards = [state.pending_board for state in active]
+        logits_batch, values_batch = evaluator.evaluate_batch(boards)
+
+        next_active: list[_ActiveGame] = []
+        for state, logits, value in zip(active, logits_batch, values_batch):
+            try:
+                pending = state.gen.send((logits, float(value)))
+                next_active.append(_ActiveGame(gen=state.gen, pending_board=pending))
+            except StopIteration as stop:
+                game = stop.value
+                completed.append(game)
+                if on_game_finished is not None:
+                    on_game_finished(game)
+
+        active = next_active
+
+    return completed
 
 
 def _termination_reason(outcome: chess.Outcome | None, *,

@@ -18,11 +18,9 @@ class MCTSConfig:
     c_puct: float = 1.5
     dirichlet_alpha: float = 0.3    # root exploration noise (self-play only)
     dirichlet_epsilon: float = 0.25
-    # Gumbel root selection (sample-efficient; great for low-sim self-play).
-    use_gumbel: bool = True
+    # Gumbel completed-Q policy-target scaling.
     gumbel_c_visit: float = 50.0
     gumbel_c_scale: float = 1.0
-    gumbel_considered: int = 16     # top-k root actions considered each move
     # claim_draw=True catches threefold/50-move draws inside search, but is
     # a bit more expensive than plain terminal checks.
     claim_draw: bool = True
@@ -45,11 +43,13 @@ class BeautyConfig:
 @dataclass
 class TrainConfig:
     games_per_iteration: int = 25
+    selfplay_concurrency: int = 32
     train_steps_per_iteration: int = 200
     batch_size: int = 128
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
     replay_buffer_size: int = 50_000
+    replay_window: int = 150_000
     max_game_moves: int = 200
     # Reward shaping for "beautiful" play.
     draw_penalty: float = 0.10      # discourage dull draws -> more decisive play

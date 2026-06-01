@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Generator
 
 import chess
 import numpy as np
@@ -91,29 +92,32 @@ class SearchResult:
 
 
 class MCTS:
-    def __init__(self, evaluator: NetEvaluator, cfg: MCTSConfig | None = None):
+    def __init__(self, evaluator: NetEvaluator | None, cfg: MCTSConfig | None = None):
         self.evaluator = evaluator
         self.cfg = cfg or MCTSConfig()
 
-    def _expand(self, node: _Node, board: chess.Board) -> float:
-        """Evaluate a leaf, attach children, return value (side-to-move perspective)."""
-        logits, value = self.evaluator.evaluate(board)
+    def _expand_from_eval(self, node: _Node, board: chess.Board,
+                          logits: np.ndarray, value: float) -> float:
+        """Attach children from evaluator outputs; return side-to-move value."""
         mapping = legal_move_indices(board)
         if not mapping:
-            return value
+            return float(value)
         idxs = list(mapping.keys())
         priors = _softmax(np.array([logits[i] for i in idxs], dtype=np.float32))
         for i, p in zip(idxs, priors):
             node.children[i] = _Node(float(p))
-        return value
+        return float(value)
 
-    def run(self, board: chess.Board, simulations: int | None = None,
-            add_noise: bool = False) -> SearchResult:
+    def search_gen(self, board: chess.Board, simulations: int | None = None,
+                   add_noise: bool = False
+                   ) -> Generator[chess.Board, tuple[np.ndarray, float], SearchResult]:
         sims = simulations if simulations is not None else self.cfg.simulations
         root = _Node(0.0)
         if self._is_terminal(board):
             return self._collect(root, board, self._terminal_value(board))
-        root_value = self._expand(root, board)
+
+        logits, value = yield board
+        root_value = self._expand_from_eval(root, board, logits, value)
 
         if add_noise and root.children:
             self._add_dirichlet_noise(root)
@@ -135,7 +139,8 @@ class MCTS:
             if self._is_terminal(sim_board):
                 value = self._terminal_value(sim_board)
             else:
-                value = self._expand(node, sim_board)
+                logits, value = yield sim_board
+                value = self._expand_from_eval(node, sim_board, logits, value)
 
             for n in reversed(path):
                 n.N += 1
@@ -143,6 +148,24 @@ class MCTS:
                 value = -value
 
         return self._collect(root, board, root_value)
+
+    def run(self, board: chess.Board, simulations: int | None = None,
+            add_noise: bool = False) -> SearchResult:
+        if self.evaluator is None:
+            raise ValueError("MCTS.run requires an evaluator")
+
+        gen = self.search_gen(board, simulations=simulations, add_noise=add_noise)
+        try:
+            req = next(gen)
+        except StopIteration as stop:
+            return stop.value
+
+        while True:
+            logits, value = self.evaluator.evaluate(req)
+            try:
+                req = gen.send((logits, value))
+            except StopIteration as stop:
+                return stop.value
 
     def _select_child(self, node: _Node) -> tuple[int, _Node]:
         c_puct = self.cfg.c_puct
@@ -186,7 +209,10 @@ class MCTS:
             moves.append(move)
             indices.append(idx)
             visits.append(child.N)
-            qs.append(-child.Q)  # value of the move from root side-to-move perspective
+            # Completed-Q: for unvisited moves, fall back to the root value estimate
+            # instead of treating them as exact draws (0.0).
+            q = -child.Q if child.N > 0 else root_value
+            qs.append(q)
             priors.append(child.prior)
         return SearchResult(
             moves=moves,
