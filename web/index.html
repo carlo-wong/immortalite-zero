@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Immortalite — Analysis</title>
+<style>
+  :root {
+    --bg: #161512; --panel: #262421; --light: #f0d9b5; --dark: #b58863;
+    --accent: #759900; --text: #bababa; --text-bright: #e8e6e3;
+    --best: #3692e7; --beautiful: #e0a000;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    display: flex; justify-content: center; padding: 24px; gap: 20px;
+  }
+  h1 { font-size: 18px; color: var(--text-bright); margin: 0 0 12px; font-weight: 600; }
+  .left { display: flex; gap: 10px; }
+  .evalbar {
+    width: 22px; height: 480px; background: #4d4d4d; border-radius: 3px;
+    overflow: hidden; position: relative; display: flex; flex-direction: column-reverse;
+  }
+  .evalbar .white { background: #f7f7f7; width: 100%; transition: height .3s ease; }
+  .evalbar .num {
+    position: absolute; width: 100%; text-align: center; font-size: 10px;
+    color: #111; top: 4px; font-weight: 700; z-index: 2;
+  }
+  .board-wrap { position: relative; width: 480px; height: 480px; }
+  .board { display: grid; grid-template-columns: repeat(8, 60px); grid-template-rows: repeat(8, 60px); }
+  .sq { width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;
+        font-size: 44px; cursor: pointer; user-select: none; position: relative; }
+  .sq.light { background: var(--light); } .sq.dark { background: var(--dark); }
+  .sq.sel { box-shadow: inset 0 0 0 4px rgba(155,199,0,.8); }
+  .sq.dest::after { content: ""; position: absolute; width: 20px; height: 20px;
+        background: rgba(20,85,30,.35); border-radius: 50%; }
+  .sq .coord { position: absolute; font-size: 9px; bottom: 1px; right: 2px; color: rgba(0,0,0,.4); }
+  .piece.w { color: #fff; text-shadow: 0 0 2px #000, 0 1px 2px #000; }
+  .piece.b { color: #000; text-shadow: 0 0 1px #888; }
+  svg.arrows { position: absolute; top: 0; left: 0; width: 480px; height: 480px; pointer-events: none; }
+  .panel { background: var(--panel); border-radius: 6px; padding: 16px; width: 320px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  button { background: var(--accent); color: #fff; border: none; padding: 7px 12px;
+        border-radius: 4px; cursor: pointer; font-size: 13px; }
+  button.secondary { background: #3a3835; }
+  textarea, input[type=text] { width: 100%; background: #1b1a17; color: var(--text-bright);
+        border: 1px solid #3a3835; border-radius: 4px; padding: 6px; font-family: monospace; font-size: 12px; }
+  label { font-size: 12px; }
+  .eval-line { padding: 7px 8px; border-radius: 4px; background: #1f1e1b; margin-bottom: 6px; font-size: 13px; }
+  .eval-line .mv { color: var(--text-bright); font-weight: 600; font-family: monospace; }
+  .eval-line .cp { float: right; font-family: monospace; }
+  .eval-line .pv { display: block; color: #8c8c8c; font-size: 11px; font-family: monospace; margin-top: 2px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .beauty-card { background: #2c2614; border: 1px solid #4a3d12; border-radius: 4px;
+        padding: 8px; margin: 8px 0; font-size: 12px; }
+  .beauty-card b { color: var(--beautiful); }
+  .moves { font-family: monospace; font-size: 13px; line-height: 1.7; max-height: 120px; overflow-y: auto; }
+  .moves .m { cursor: pointer; padding: 0 3px; border-radius: 3px; }
+  .moves .m.active { background: var(--accent); color: #fff; }
+  .legend { font-size: 11px; margin-top: 6px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin: 0 4px 0 10px; }
+  .status { font-size: 11px; color: #888; margin-top: 8px; min-height: 14px; }
+  h2 { font-size: 13px; color: var(--text-bright); margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .5px; }
+</style>
+</head>
+<body>
+  <div class="left">
+    <div class="evalbar"><div class="num" id="evalNum">0.0</div><div class="white" id="evalWhite" style="height:50%"></div></div>
+    <div class="board-wrap">
+      <div class="board" id="board"></div>
+      <svg class="arrows" id="arrows" viewBox="0 0 480 480"></svg>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h1>Immortalite — Analysis</h1>
+    <div class="row">
+      <button id="flip" class="secondary">Flip</button>
+      <button id="reset" class="secondary">Start pos</button>
+      <button id="prev" class="secondary">◀</button>
+      <button id="next" class="secondary">▶</button>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="beauty" checked /> Beauty bias</label>
+      <label>Sims <input type="text" id="sims" value="200" style="width:50px" /></label>
+      <button id="analyze">Analyze</button>
+    </div>
+
+    <h2>Candidate lines</h2>
+    <div id="lines"></div>
+    <div class="beauty-card" id="beautyCard" style="display:none"></div>
+    <div class="legend">
+      <span class="dot" style="background:var(--best)"></span>best
+      <span class="dot" style="background:var(--beautiful)"></span>beautiful
+    </div>
+
+    <h2>Moves</h2>
+    <div class="moves" id="moves"></div>
+
+    <h2>Import PGN / FEN</h2>
+    <textarea id="importBox" rows="3" placeholder="Paste a PGN game or a FEN string..."></textarea>
+    <div class="row" style="margin-top:6px">
+      <button id="loadBtn">Load</button>
+      <input type="text" id="fenOut" readonly />
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+<script type="module">
+import { Chess } from "https://esm.sh/chess.js@1.0.0-beta.8";
+
+const API = "http://localhost:8000/analyze";
+const UNICODE = { p:"♟", n:"♞", b:"♝", r:"♜", q:"♛", k:"♚" };
+
+let game = new Chess();
+let history = [];      // list of FENs for navigation
+let ply = 0;           // current index into history
+let orientation = "w";
+let selected = null;
+let lastAnalysis = null;
+
+const $ = id => document.getElementById(id);
+
+function pushState() {
+  history = history.slice(0, ply + 1);
+  history.push(game.fen());
+  ply = history.length - 1;
+}
+
+function init() {
+  history = [game.fen()]; ply = 0;
+  render(); analyze();
+}
+
+function squareName(fileIdx, rankIdx) {
+  // fileIdx,rankIdx are screen coords (0..7 left->right, top->bottom)
+  const file = orientation === "w" ? fileIdx : 7 - fileIdx;
+  const rank = orientation === "w" ? 7 - rankIdx : rankIdx;
+  return "abcdefgh"[file] + (rank + 1);
+}
+
+function render() {
+  const board = $("board"); board.innerHTML = "";
+  const pos = game.board(); // [rank8..rank1][file a..h]
+  for (let r = 0; r < 8; r++) {
+    for (let f = 0; f < 8; f++) {
+      const sq = document.createElement("div");
+      const name = squareName(f, r);
+      const fileIdx = orientation === "w" ? f : 7 - f;
+      const rankIdx = orientation === "w" ? 7 - r : r;
+      const isLight = (fileIdx + rankIdx) % 2 === 1;
+      sq.className = "sq " + (isLight ? "light" : "dark");
+      sq.dataset.square = name;
+      // pos is rank-8-first (pos[0] = rank 8); rankIdx is 0-based chess rank.
+      const piece = pos[7 - rankIdx][fileIdx];
+      if (piece) {
+        const span = document.createElement("span");
+        span.className = "piece " + piece.color;
+        span.textContent = UNICODE[piece.type];
+        sq.appendChild(span);
+      }
+      if (selected === name) sq.classList.add("sel");
+      if (selected) {
+        const legal = game.moves({ square: selected, verbose: true });
+        if (legal.some(m => m.to === name)) sq.classList.add("dest");
+      }
+      sq.onclick = () => onSquareClick(name);
+      board.appendChild(sq);
+    }
+  }
+  $("fenOut").value = game.fen();
+  renderMoves();
+  drawArrows();
+}
+
+function onSquareClick(name) {
+  if (ply !== history.length - 1) return; // only move from the live position
+  const piece = game.get(name);
+  if (selected) {
+    const legal = game.moves({ square: selected, verbose: true });
+    const mv = legal.find(m => m.to === name);
+    if (mv) {
+      game.move({ from: selected, to: name, promotion: "q" });
+      selected = null; pushState(); render(); analyze(); return;
+    }
+  }
+  selected = piece && piece.color === game.turn() ? name : null;
+  render();
+}
+
+function renderMoves() {
+  const box = $("moves"); box.innerHTML = "";
+  const hist = game.history();
+  for (let i = 0; i < hist.length; i++) {
+    if (i % 2 === 0) box.appendChild(document.createTextNode(`${i / 2 + 1}. `));
+    const span = document.createElement("span");
+    span.className = "m" + (i + 1 === ply ? " active" : "");
+    span.textContent = hist[i] + " ";
+    span.onclick = () => { goTo(i + 1); };
+    box.appendChild(span);
+  }
+}
+
+function goTo(targetPly) {
+  targetPly = Math.max(0, Math.min(history.length - 1, targetPly));
+  const g = new Chess(); // rebuild from start to targetPly using stored fens
+  game.load(history[targetPly]);
+  ply = targetPly; selected = null; render(); analyze();
+}
+
+function squareToXY(sq) {
+  let file = "abcdefgh".indexOf(sq[0]);
+  let rank = parseInt(sq[1], 10) - 1;
+  const x = orientation === "w" ? file : 7 - file;
+  const y = orientation === "w" ? 7 - rank : rank;
+  return { cx: x * 60 + 30, cy: y * 60 + 30 };
+}
+
+function drawArrow(svg, from, to, color) {
+  const a = squareToXY(from), b = squareToXY(to);
+  const ns = "http://www.w3.org/2000/svg";
+  const line = document.createElementNS(ns, "line");
+  line.setAttribute("x1", a.cx); line.setAttribute("y1", a.cy);
+  line.setAttribute("x2", b.cx); line.setAttribute("y2", b.cy);
+  line.setAttribute("stroke", color); line.setAttribute("stroke-width", "8");
+  line.setAttribute("stroke-linecap", "round"); line.setAttribute("opacity", "0.75");
+  line.setAttribute("marker-end", `url(#head-${color.replace('#','')})`);
+  svg.appendChild(line);
+}
+
+function drawArrows() {
+  const svg = $("arrows"); svg.innerHTML = "";
+  if (!lastAnalysis || ply !== history.length - 1) return;
+  const ns = "http://www.w3.org/2000/svg";
+  for (const c of ["#3692e7", "#e0a000"]) {
+    const m = document.createElementNS(ns, "marker");
+    m.setAttribute("id", `head-${c.replace('#','')}`); m.setAttribute("markerWidth", "4");
+    m.setAttribute("markerHeight", "4"); m.setAttribute("refX", "2"); m.setAttribute("refY", "2");
+    m.setAttribute("orient", "auto");
+    const p = document.createElementNS(ns, "path");
+    p.setAttribute("d", "M0,0 L4,2 L0,4 Z"); p.setAttribute("fill", c);
+    m.appendChild(p); svg.appendChild(m);
+  }
+  if (lastAnalysis.best_move) drawArrow(svg, lastAnalysis.best_move.slice(0,2), lastAnalysis.best_move.slice(2,4), "#3692e7");
+  if (lastAnalysis.beautiful_move && lastAnalysis.beautiful_move !== lastAnalysis.best_move)
+    drawArrow(svg, lastAnalysis.beautiful_move.slice(0,2), lastAnalysis.beautiful_move.slice(2,4), "#e0a000");
+}
+
+function setEvalBar(cp, turn) {
+  // cp is from side-to-move perspective; convert to white perspective.
+  let white_cp = turn === "w" ? cp : -cp;
+  const pct = 1 / (1 + Math.exp(-white_cp / 250)); // logistic squashing
+  $("evalWhite").style.height = (pct * 100) + "%";
+  $("evalNum").textContent = (white_cp / 100).toFixed(1);
+}
+
+function uciToSan(fen, uci) {
+  // Convert a single UCI move (e.g. "e2e4", "e7e8q") to SAN at the given position.
+  try {
+    const g = new Chess(fen);
+    const mv = g.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
+    return mv ? mv.san : uci;
+  } catch { return uci; }
+}
+
+function uciLineToSan(fen, uciMoves) {
+  // Convert a sequence of UCI moves to SAN, replaying from the given position.
+  try {
+    const g = new Chess(fen);
+    return uciMoves.map(u => {
+      const mv = g.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] });
+      return mv ? mv.san : u;
+    });
+  } catch { return uciMoves; }
+}
+
+function renderLines(a) {
+  const box = $("lines"); box.innerHTML = "";
+  for (const line of a.lines) {
+    const div = document.createElement("div"); div.className = "eval-line";
+    const cp = (line.eval_cp / 100).toFixed(2);
+    const moveSan = uciToSan(a.fen, line.move);
+    const pvSan = uciLineToSan(a.fen, line.pv).join(" ");
+    div.innerHTML = `<span class="mv">${moveSan}</span><span class="cp">${cp}</span>
+                     <span class="pv">${pvSan}</span>`;
+    box.appendChild(div);
+  }
+  const card = $("beautyCard");
+  if (a.beautiful_move && a.beautiful_move !== a.best_move && a.beauty) {
+    const b = a.beauty;
+    const beautifulSan = uciToSan(a.fen, a.beautiful_move);
+    const bestSan = uciToSan(a.fen, a.best_move);
+    card.style.display = "block";
+    card.innerHTML = `<b>Beautiful choice:</b> ${beautifulSan}
+      (costs ${(a.beauty_cost_cp/100).toFixed(2)} vs best ${bestSan})<br>
+      sacrifice ${b.sacrifice.toFixed(1)} · attack ${b.attack.toFixed(1)} ·
+      tactical ${b.tactical.toFixed(1)} · surprise ${b.surprise.toFixed(2)}`;
+  } else card.style.display = "none";
+}
+
+async function analyze() {
+  if (game.isGameOver()) { $("status").textContent = "Game over."; return; }
+  $("status").textContent = "Analyzing...";
+  try {
+    const res = await fetch(API, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fen: game.fen(),
+        multipv: 3,
+        simulations: parseInt($("sims").value) || 200,
+        beauty: $("beauty").checked,
+      }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const a = await res.json();
+    lastAnalysis = a;
+    setEvalBar(a.eval_cp, game.turn());
+    renderLines(a); drawArrows();
+    $("status").textContent = "";
+  } catch (e) {
+    $("status").textContent = "Backend offline? Start: uvicorn server.app:app --port 8000";
+  }
+}
+
+$("flip").onclick = () => { orientation = orientation === "w" ? "b" : "w"; render(); };
+$("reset").onclick = () => { game = new Chess(); init(); };
+$("prev").onclick = () => goTo(ply - 1);
+$("next").onclick = () => goTo(ply + 1);
+$("analyze").onclick = analyze;
+$("beauty").onchange = analyze;
+$("loadBtn").onclick = () => {
+  const text = $("importBox").value.trim();
+  try {
+    const g = new Chess();
+    if (text.includes("/") && text.split(" ").length >= 4 && !text.includes("\n")) g.load(text);
+    else g.loadPgn(text);
+    game = g; init();
+  } catch (e) { $("status").textContent = "Could not parse PGN/FEN."; }
+};
+
+init();
+</script>
+</body>
+</html>

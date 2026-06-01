@@ -1,0 +1,8 @@
+# Core engine + training
+python-chess>=1.999
+numpy>=1.24
+torch>=2.0          # CPU build is fine; Colab provides CUDA build
+
+# Analysis server
+fastapi>=0.110
+uvicorn[standard]>=0.27
