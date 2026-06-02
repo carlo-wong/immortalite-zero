@@ -11,6 +11,7 @@ import argparse
 import os
 import random
 import time
+import zipfile
 from copy import deepcopy
 from collections import Counter, deque
 from dataclasses import asdict
@@ -246,32 +247,40 @@ def _shard_encoding_version(data: np.lib.npyio.NpzFile) -> int:
 
 
 def _count_samples_in_shard(path: str) -> int:
-    with np.load(path) as data:
-        if _shard_encoding_version(data) != ENCODING_VERSION:
-            return 0
-        key = "values" if "values" in data else "value"
-        return int(data[key].shape[0])
+    try:
+        with np.load(path) as data:
+            if _shard_encoding_version(data) != ENCODING_VERSION:
+                return 0
+            key = "values" if "values" in data else "value"
+            return int(data[key].shape[0])
+    except (ValueError, OSError, EOFError, zipfile.BadZipFile, KeyError) as exc:
+        print(f"warning: unreadable shard {os.path.basename(path)} ({exc}); deleting it")
+        return -1
 
 
 def _load_sample_shard(path: str) -> list[Sample]:
-    with np.load(path) as data:
-        if _shard_encoding_version(data) != ENCODING_VERSION:
-            return []
-        planes = data["planes"]
-        policies = data["policies"] if "policies" in data else data["policy"]
-        players = data["players"] if "players" in data else data["player"]
-        values = data["values"] if "values" in data else data["value"]
-        samples: list[Sample] = []
-        for i in range(values.shape[0]):
-            samples.append(
-                Sample(
-                    planes=planes[i].astype(np.float32),
-                    policy=policies[i].astype(np.float32),
-                    player=bool(players[i]),
-                    value=float(values[i]),
+    try:
+        with np.load(path) as data:
+            if _shard_encoding_version(data) != ENCODING_VERSION:
+                return []
+            planes = data["planes"]
+            policies = data["policies"] if "policies" in data else data["policy"]
+            players = data["players"] if "players" in data else data["player"]
+            values = data["values"] if "values" in data else data["value"]
+            samples: list[Sample] = []
+            for i in range(values.shape[0]):
+                samples.append(
+                    Sample(
+                        planes=planes[i].astype(np.float32),
+                        policy=policies[i].astype(np.float32),
+                        player=bool(players[i]),
+                        value=float(values[i]),
+                    )
                 )
-            )
-        return samples
+            return samples
+    except (ValueError, OSError, EOFError, zipfile.BadZipFile, KeyError) as exc:
+        print(f"warning: skipping unreadable shard {os.path.basename(path)} ({exc})")
+        return []
 
 
 def _prune_sample_shards(ckpt_dir: str, keep_samples: int) -> None:
@@ -285,6 +294,12 @@ def _prune_sample_shards(ckpt_dir: str, keep_samples: int) -> None:
     total = 0
     for path in reversed(shards):
         sample_count = _count_samples_in_shard(path)
+        if sample_count < 0:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            continue
         if sample_count <= 0:
             # Preserve incompatible legacy shards; they are ignored for replay.
             keep.add(path)
