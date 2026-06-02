@@ -72,17 +72,26 @@ class NetEvaluator:
     def __init__(self, net: ChessNet, device: str = "cpu"):
         self.net = net.to(device).eval()
         self.device = device
+        self._use_cuda_autocast = str(device).startswith("cuda")
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate(self, board: chess.Board) -> tuple[np.ndarray, float]:
         """Return (policy_logits over POLICY_SIZE, value in [-1, 1])."""
         x = torch.from_numpy(board_to_planes(board)).unsqueeze(0).to(self.device)
-        logits, value = self.net(x)
-        return logits[0].cpu().numpy(), float(value[0].cpu())
+        if self._use_cuda_autocast:
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                logits, value = self.net(x)
+        else:
+            logits, value = self.net(x)
+        return logits[0].float().cpu().numpy(), float(value[0].float().cpu())
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_batch(self, boards: list[chess.Board]) -> tuple[np.ndarray, np.ndarray]:
         x = np.stack([board_to_planes(b) for b in boards])
         x = torch.from_numpy(x).to(self.device)
-        logits, value = self.net(x)
-        return logits.cpu().numpy(), value.cpu().numpy()
+        if self._use_cuda_autocast:
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                logits, value = self.net(x)
+        else:
+            logits, value = self.net(x)
+        return logits.float().cpu().numpy(), value.float().cpu().numpy()

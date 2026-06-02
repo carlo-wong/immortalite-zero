@@ -186,7 +186,8 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     eval_a = NetEvaluator(net_a, device=device)
     eval_b = NetEvaluator(net_b, device=device)
     score = 0.0
-    for game_idx in range(n_games):
+    gate_bar = tqdm(range(n_games), desc=f"gate ({n_games} games)", unit="game", leave=False)
+    for game_idx in gate_bar:
         a_is_white = (game_idx % 2 == 0)
         white_eval = eval_a if a_is_white else eval_b
         black_eval = eval_b if a_is_white else eval_a
@@ -196,6 +197,8 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             score += 0.5
         elif (winner == 1 and a_is_white) or (winner == -1 and not a_is_white):
             score += 1.0
+        gate_bar.set_postfix(score=f"{score / (game_idx + 1):.3f}")
+    gate_bar.close()
     return score / n_games
 
 
