@@ -123,6 +123,6 @@ def test_mcts_treats_claimable_draws_as_terminal() -> None:
         evaluator = FakeEvaluator(value=0.9)
         result = MCTS(evaluator, cfg.mcts).run(board, simulations=cfg.mcts.simulations)
 
-        assert result.root_value == 0.0
+        assert result.root_value == -cfg.mcts.draw_contempt
         assert len(result.moves) == 0
         assert evaluator.calls == 0

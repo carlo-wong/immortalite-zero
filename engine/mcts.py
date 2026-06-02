@@ -112,9 +112,10 @@ class MCTS:
                    add_noise: bool = False
                    ) -> Generator[chess.Board, tuple[np.ndarray, float], SearchResult]:
         sims = simulations if simulations is not None else self.cfg.simulations
+        root_turn = board.turn
         root = _Node(0.0)
         if self._is_terminal(board):
-            return self._collect(root, board, self._terminal_value(board))
+            return self._collect(root, board, self._terminal_value(board, root_turn))
 
         logits, value = yield board
         root_value = self._expand_from_eval(root, board, logits, value)
@@ -137,7 +138,7 @@ class MCTS:
                 path.append(node)
 
             if self._is_terminal(sim_board):
-                value = self._terminal_value(sim_board)
+                value = self._terminal_value(sim_board, root_turn)
             else:
                 logits, value = yield sim_board
                 value = self._expand_from_eval(node, sim_board, logits, value)
@@ -194,11 +195,19 @@ class MCTS:
         # self-play and avoids overvaluing claimable repetition/50-move draws.
         return board.is_game_over(claim_draw=self.cfg.claim_draw)
 
-    def _terminal_value(self, board: chess.Board) -> float:
+    def _terminal_value(self, board: chess.Board,
+                        root_turn: chess.Color | None = None) -> float:
+        if root_turn is None:
+            root_turn = board.turn
         outcome = board.outcome(claim_draw=self.cfg.claim_draw)
+        if outcome is None:
+            return 0.0
         if outcome is not None and outcome.termination == chess.Termination.CHECKMATE:
             return -1.0  # side to move has been mated
-        return 0.0       # stalemate / draw
+        contempt = float(self.cfg.draw_contempt)
+        # Root-relative contempt: regardless of simulation depth parity, a draw
+        # backs up as a small negative value for the root side to move.
+        return -contempt if board.turn == root_turn else contempt
 
     def _collect(self, root: _Node, board: chess.Board, root_value: float) -> SearchResult:
         moves, indices, visits, qs, priors = [], [], [], [], []

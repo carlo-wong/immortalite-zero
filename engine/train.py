@@ -220,6 +220,8 @@ def main() -> None:
         cfg.train.selfplay_concurrency = args.concurrency
     if args.replay_window is not None:
         cfg.train.replay_window = args.replay_window
+    # Keep self-play search contempt aligned with the draw target shaping.
+    cfg.mcts.draw_contempt = cfg.train.draw_penalty
 
     # When resuming, the checkpoint's own architecture wins over the CLI preset
     # (you cannot change net size mid-training). To train a fresh net of a

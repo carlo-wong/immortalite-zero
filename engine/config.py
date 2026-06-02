@@ -21,6 +21,8 @@ class MCTSConfig:
     # Gumbel completed-Q policy-target scaling.
     gumbel_c_visit: float = 50.0
     gumbel_c_scale: float = 1.0
+    # Search contempt: root treats draw terminals as slightly worse than 0.
+    draw_contempt: float = 0.10
     # claim_draw=True catches threefold/50-move draws inside search, but is
     # a bit more expensive than plain terminal checks.
     claim_draw: bool = True
