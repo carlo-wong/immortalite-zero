@@ -106,7 +106,8 @@ def play_game(evaluator: NetEvaluator, cfg: Config, simulations: int) -> GameRes
 
 def play_games_batched(evaluator: NetEvaluator, cfg: Config, simulations: int,
                        num_games: int, concurrency: int,
-                       on_game_finished: Callable[[GameResult], None] | None = None
+                       on_game_finished: Callable[[GameResult], None] | None = None,
+                       on_step: Callable[[int], None] | None = None
                        ) -> list[GameResult]:
     if num_games <= 0:
         return []
@@ -125,6 +126,8 @@ def play_games_batched(evaluator: NetEvaluator, cfg: Config, simulations: int,
 
         boards = [state.pending_board for state in active]
         logits_batch, values_batch = evaluator.evaluate_batch(boards)
+        if on_step is not None:
+            on_step(len(active))
 
         next_active: list[_ActiveGame] = []
         for state, logits, value in zip(active, logits_batch, values_batch):
