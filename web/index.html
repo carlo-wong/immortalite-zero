@@ -102,6 +102,11 @@
     <textarea id="importBox" rows="3" placeholder="Paste a PGN game or a FEN string..."></textarea>
     <div class="row" style="margin-top:6px">
       <button id="loadBtn">Load</button>
+    </div>
+
+    <h2>Live PGN / FEN</h2>
+    <textarea id="pgnOut" rows="3" readonly></textarea>
+    <div class="row" style="margin-top:6px">
       <input type="text" id="fenOut" readonly />
     </div>
     <div class="status" id="status"></div>
@@ -170,6 +175,7 @@ function render() {
     }
   }
   $("fenOut").value = game.fen();
+  $("pgnOut").value = game.pgn();
   renderMoves();
   drawArrows();
 }
@@ -247,12 +253,21 @@ function drawArrows() {
     drawArrow(svg, lastAnalysis.beautiful_move.slice(0,2), lastAnalysis.beautiful_move.slice(2,4), "#e0a000");
 }
 
+function toWhiteCp(cp, turn) {
+  // Backend evals are side-to-move relative; flip so + is good for White.
+  return turn === "w" ? cp : -cp;
+}
+
+function formatCp(cp) {
+  const v = cp / 100;
+  return (v >= 0 ? "+" : "") + v.toFixed(2);
+}
+
 function setEvalBar(cp, turn) {
-  // cp is from side-to-move perspective; convert to white perspective.
-  let white_cp = turn === "w" ? cp : -cp;
+  const white_cp = toWhiteCp(cp, turn);
   const pct = 1 / (1 + Math.exp(-white_cp / 250)); // logistic squashing
   $("evalWhite").style.height = (pct * 100) + "%";
-  $("evalNum").textContent = (white_cp / 100).toFixed(1);
+  $("evalNum").textContent = formatCp(white_cp);
 }
 
 function uciToSan(fen, uci) {
@@ -277,9 +292,10 @@ function uciLineToSan(fen, uciMoves) {
 
 function renderLines(a) {
   const box = $("lines"); box.innerHTML = "";
+  const turn = a.fen.split(" ")[1];
   for (const line of a.lines) {
     const div = document.createElement("div"); div.className = "eval-line";
-    const cp = (line.eval_cp / 100).toFixed(2);
+    const cp = formatCp(toWhiteCp(line.eval_cp, turn));
     const moveSan = uciToSan(a.fen, line.move);
     const pvSan = uciLineToSan(a.fen, line.pv).join(" ");
     div.innerHTML = `<span class="mv">${moveSan}</span><span class="cp">${cp}</span>
@@ -307,7 +323,7 @@ async function analyze() {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         fen: game.fen(),
-        multipv: 3,
+        multipv: 5,
         simulations: parseInt($("sims").value) || 200,
         beauty: $("beauty").checked,
       }),

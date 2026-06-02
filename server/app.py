@@ -13,6 +13,7 @@ from dataclasses import asdict
 import chess
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -28,7 +29,12 @@ app.add_middleware(
 )
 
 _cfg = Config()
-_checkpoint = os.environ.get("IMMORTALITE_CHECKPOINT") or None
+# Use IMMORTALITE_CHECKPOINT if set, otherwise fall back to the latest checkpoint
+# so a plain `uvicorn server.app:app` run picks up trained weights automatically.
+_default_checkpoint = os.path.join(_cfg.train.checkpoint_dir, "latest.pt")
+_checkpoint = os.environ.get("IMMORTALITE_CHECKPOINT") or (
+    _default_checkpoint if os.path.exists(_default_checkpoint) else None
+)
 _analyzer = Analyzer(_checkpoint, _cfg)
 
 
@@ -37,6 +43,11 @@ class AnalyzeRequest(BaseModel):
     multipv: int = 3
     simulations: int | None = None
     beauty: bool = True
+
+
+@app.get("/")
+def root() -> RedirectResponse:
+    return RedirectResponse(url="/app/")
 
 
 @app.get("/health")
