@@ -18,7 +18,7 @@ _EXPLORATION_MOVES = 20  # sample from the policy for this many plies, then argm
 
 @dataclass
 class Sample:
-    planes: np.ndarray      # (18, 8, 8)
+    planes: np.ndarray      # (20, 8, 8)
     policy: np.ndarray      # (POLICY_SIZE,)
     player: chess.Color
     value: float = 0.0      # filled in once the game finishes

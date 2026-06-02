@@ -21,6 +21,7 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 from .config import Config, NetConfig
+from .encoding import ENCODING_VERSION
 from .network import ChessNet, NetEvaluator
 from .selfplay import GameResult, Sample, play_game_gen, play_games_batched
 
@@ -72,8 +73,15 @@ def save_checkpoint(net: ChessNet, cfg: Config, path: str, iteration: int = 0) -
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     # Store the net architecture so the loader can rebuild a matching model,
     # and the iteration so training resumes with a continuous step count.
-    torch.save({"model": net.state_dict(), "net": asdict(cfg.net),
-                "iteration": iteration}, path)
+    torch.save(
+        {
+            "model": net.state_dict(),
+            "net": asdict(cfg.net),
+            "iteration": iteration,
+            "encoding_version": ENCODING_VERSION,
+        },
+        path,
+    )
 
 
 def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
@@ -211,21 +219,41 @@ def _save_sample_shard(ckpt_dir: str, iteration: int, samples: list[Sample]) -> 
         return
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = _sample_shard_path(ckpt_dir, iteration)
-    planes = np.stack([s.planes for s in samples]).astype(np.uint8)
+    planes = np.stack([s.planes for s in samples]).astype(np.float16)
     policies = np.stack([s.policy for s in samples]).astype(np.float16)
     players = np.array([bool(s.player) for s in samples], dtype=np.bool_)
     values = np.array([s.value for s in samples], dtype=np.float32)
-    np.savez_compressed(path, planes=planes, policies=policies, players=players, values=values)
+    np.savez_compressed(
+        path,
+        planes=planes,
+        policies=policies,
+        players=players,
+        values=values,
+        encoding_version=np.array([ENCODING_VERSION], dtype=np.int16),
+    )
+
+
+def _shard_encoding_version(data: np.lib.npyio.NpzFile) -> int:
+    if "encoding_version" not in data:
+        return 1
+    version_raw = np.asarray(data["encoding_version"]).reshape(-1)
+    if version_raw.size == 0:
+        return 1
+    return int(version_raw[0])
 
 
 def _count_samples_in_shard(path: str) -> int:
     with np.load(path) as data:
+        if _shard_encoding_version(data) != ENCODING_VERSION:
+            return 0
         key = "values" if "values" in data else "value"
         return int(data[key].shape[0])
 
 
 def _load_sample_shard(path: str) -> list[Sample]:
     with np.load(path) as data:
+        if _shard_encoding_version(data) != ENCODING_VERSION:
+            return []
         planes = data["planes"]
         policies = data["policies"] if "policies" in data else data["policy"]
         players = data["players"] if "players" in data else data["player"]
@@ -253,8 +281,13 @@ def _prune_sample_shards(ckpt_dir: str, keep_samples: int) -> None:
     keep: set[str] = set()
     total = 0
     for path in reversed(shards):
+        sample_count = _count_samples_in_shard(path)
+        if sample_count <= 0:
+            # Preserve incompatible legacy shards; they are ignored for replay.
+            keep.add(path)
+            continue
         keep.add(path)
-        total += _count_samples_in_shard(path)
+        total += sample_count
         if total >= keep_samples:
             break
 
@@ -278,6 +311,8 @@ def _warm_replay_buffer(buffer: deque[Sample], ckpt_dir: str, replay_window: int
         if remaining <= 0:
             break
         shard_samples = _load_sample_shard(path)
+        if not shard_samples:
+            continue
         if len(shard_samples) > remaining:
             shard_samples = shard_samples[-remaining:]
         chosen_chunks.append(shard_samples)
@@ -352,6 +387,15 @@ def main() -> None:
     state = None
     if args.resume and os.path.exists(args.resume):
         state = torch.load(args.resume, map_location=args.device)
+        ckpt_encoding_version = 1
+        if isinstance(state, dict):
+            ckpt_encoding_version = int(state.get("encoding_version", 1))
+        if ckpt_encoding_version != ENCODING_VERSION:
+            raise ValueError(
+                f"checkpoint encoding version {ckpt_encoding_version} does not match "
+                f"current encoding version {ENCODING_VERSION}; start with a fresh "
+                f"--checkpoint-dir for this encoding"
+            )
         if isinstance(state, dict) and "net" in state:
             cfg.net = NetConfig(**state["net"])
     net = ChessNet(cfg.net).to(args.device)
@@ -467,18 +511,25 @@ def main() -> None:
             else:
                 prev_state = torch.load(previous_snapshot, map_location=args.device)
                 if isinstance(prev_state, dict) and "model" in prev_state:
-                    prev_net_cfg = cfg.net
-                    if "net" in prev_state:
-                        prev_net_cfg = NetConfig(**prev_state["net"])
-                    prev_net = ChessNet(prev_net_cfg).to(args.device)
-                    prev_net.load_state_dict(prev_state["model"])
-                    winrate_vs_prev = play_match(
-                        net, prev_net, cfg, n_games=args.gate_games, sims=sims, device=args.device
-                    )
-                    print(
-                        f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
-                        f"-> {winrate_vs_prev:.3f}"
-                    )
+                    prev_encoding_version = int(prev_state.get("encoding_version", 1))
+                    if prev_encoding_version != ENCODING_VERSION:
+                        print(
+                            f"gate iter {it}: skipped ({os.path.basename(previous_snapshot)} "
+                            f"encoding {prev_encoding_version} != {ENCODING_VERSION})"
+                        )
+                    else:
+                        prev_net_cfg = cfg.net
+                        if "net" in prev_state:
+                            prev_net_cfg = NetConfig(**prev_state["net"])
+                        prev_net = ChessNet(prev_net_cfg).to(args.device)
+                        prev_net.load_state_dict(prev_state["model"])
+                        winrate_vs_prev = play_match(
+                            net, prev_net, cfg, n_games=args.gate_games, sims=sims, device=args.device
+                        )
+                        print(
+                            f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
+                            f"-> {winrate_vs_prev:.3f}"
+                        )
                 else:
                     print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")
 

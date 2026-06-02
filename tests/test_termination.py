@@ -4,7 +4,7 @@ import chess
 import numpy as np
 
 from engine.config import Config
-from engine.encoding import POLICY_SIZE
+from engine.encoding import NUM_INPUT_PLANES, POLICY_SIZE
 from engine.mcts import MCTS
 from engine.selfplay import Sample, _assign_values, _termination_reason, play_game
 
@@ -21,7 +21,7 @@ class FakeEvaluator:
 
 
 def _sample_pair() -> list[Sample]:
-    planes = np.zeros((18, 8, 8), dtype=np.float32)
+    planes = np.zeros((NUM_INPUT_PLANES, 8, 8), dtype=np.float32)
     policy = np.zeros(POLICY_SIZE, dtype=np.float32)
     return [
         Sample(planes.copy(), policy.copy(), chess.WHITE),

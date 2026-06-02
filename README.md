@@ -62,6 +62,15 @@ python -m engine.train --iterations 20 --device cpu
 
 Colab free GPU (recommended): open `colab/train.ipynb`, set the runtime to GPU, and run the cells. Checkpoints save to Google Drive every iteration so disconnects don't lose progress.
 
+Note: the current canonical encoding uses 20 input planes (side-to-move mirrored + repetition + halfmove clock). Older 18-plane sample shards/checkpoints are intentionally ignored by the trainer; start this encoding with a fresh `--checkpoint-dir`.
+
+You can inspect a folder before training/resume:
+
+```bash
+python -m engine.inspect_encoding --checkpoint-dir checkpoints
+python -m engine.inspect_encoding --checkpoint-dir checkpoints --only-incompatible --json
+```
+
 ## Use as a UCI engine
 
 ```bash
@@ -87,7 +96,6 @@ Options: `Simulations` (search budget/move), `Beauty` (play beautiful vs best), 
 ## Roadmap
 
 - Optional supervised pretraining on attacking-master games (Tal, Kasparov, Morphy) for more strength + sharper style.
-- Canonical (side-to-move-mirrored) board encoding for better sample efficiency.
 - Full Gumbel sequential-halving budget allocation in search.
 - Upgrade GUI to React + Chessground if a richer UI is wanted.
 ```

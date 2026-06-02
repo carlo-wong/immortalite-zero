@@ -1,21 +1,17 @@
 """Board and move encoding.
 
-Input encoding: 18 planes of 8x8.
-  - 12 planes: piece type x colour (P N B R Q K white, then black)
-  -  1 plane : side to move (1.0 if white to move)
-  -  4 planes: castling rights (WK WQ BK BQ)
+Input encoding: 20 planes of 8x8 in side-to-move canonical orientation.
+  - 12 planes: piece type x colour (P N B R Q K us, then them)
+  -  4 planes: castling rights (us-K us-Q them-K them-Q)
   -  1 plane : en-passant target square
+  -  2 planes: repetition flags (>=2 occurrences, >=3 occurrences)
+  -  1 plane : halfmove clock (normalized to [0, 1], broadcast)
 
 Move encoding: the AlphaZero 8x8x73 = 4672 scheme.
   from_square * 73 + plane, where plane is one of:
     0..55  queen-like moves: 8 directions x 7 distances
     56..63 knight moves
     64..72 underpromotions: 3 file-directions x {knight, bishop, rook}
-
-We use *absolute* (non-mirrored) board coordinates. Mirroring to the
-side-to-move perspective is a known sample-efficiency improvement and a good
-future optimisation, but absolute encoding keeps the mapping simple and
-provably correct, which matters more for a first working version.
 """
 
 from __future__ import annotations
@@ -23,8 +19,9 @@ from __future__ import annotations
 import chess
 import numpy as np
 
-NUM_INPUT_PLANES = 18
+NUM_INPUT_PLANES = 20
 POLICY_SIZE = 64 * 73  # 4672
+ENCODING_VERSION = 2
 
 # 8 sliding directions as (d_rank, d_file), ordered N, NE, E, SE, S, SW, W, NW.
 _QUEEN_DIRS = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
@@ -44,39 +41,49 @@ def _sign(x: int) -> int:
 
 
 def board_to_planes(board: chess.Board) -> np.ndarray:
-    """Encode a board as a (18, 8, 8) float32 tensor."""
+    """Encode a board as a (20, 8, 8) float32 tensor."""
     planes = np.zeros((NUM_INPUT_PLANES, 8, 8), dtype=np.float32)
+    # Canonical orientation: side-to-move is always "white" after mirroring.
+    canonical = board if board.turn == chess.WHITE else board.mirror()
 
-    for square, piece in board.piece_map().items():
+    for square, piece in canonical.piece_map().items():
         rank = chess.square_rank(square)
         file = chess.square_file(square)
         plane = (piece.piece_type - 1) + (0 if piece.color == chess.WHITE else 6)
         planes[plane, rank, file] = 1.0
 
-    if board.turn == chess.WHITE:
+    if canonical.has_kingside_castling_rights(chess.WHITE):
         planes[12, :, :] = 1.0
-
-    if board.has_kingside_castling_rights(chess.WHITE):
+    if canonical.has_queenside_castling_rights(chess.WHITE):
         planes[13, :, :] = 1.0
-    if board.has_queenside_castling_rights(chess.WHITE):
+    if canonical.has_kingside_castling_rights(chess.BLACK):
         planes[14, :, :] = 1.0
-    if board.has_kingside_castling_rights(chess.BLACK):
+    if canonical.has_queenside_castling_rights(chess.BLACK):
         planes[15, :, :] = 1.0
-    if board.has_queenside_castling_rights(chess.BLACK):
-        planes[16, :, :] = 1.0
 
-    if board.ep_square is not None:
-        rank = chess.square_rank(board.ep_square)
-        file = chess.square_file(board.ep_square)
-        planes[17, rank, file] = 1.0
+    if canonical.ep_square is not None:
+        rank = chess.square_rank(canonical.ep_square)
+        file = chess.square_file(canonical.ep_square)
+        planes[16, rank, file] = 1.0
+
+    if board.is_repetition(2):
+        planes[17, :, :] = 1.0
+    if board.is_repetition(3):
+        planes[18, :, :] = 1.0
+    halfmove_norm = min(float(board.halfmove_clock) / 100.0, 1.0)
+    planes[19, :, :] = halfmove_norm
 
     return planes
 
 
 def move_to_index(move: chess.Move, board: chess.Board) -> int:
     """Map a legal move to its index in [0, POLICY_SIZE)."""
-    from_sq = move.from_square
-    to_sq = move.to_square
+    if board.turn == chess.BLACK:
+        from_sq = chess.square_mirror(move.from_square)
+        to_sq = chess.square_mirror(move.to_square)
+    else:
+        from_sq = move.from_square
+        to_sq = move.to_square
     fr, ff = chess.square_rank(from_sq), chess.square_file(from_sq)
     tr, tf = chess.square_rank(to_sq), chess.square_file(to_sq)
     d_rank, d_file = tr - fr, tf - ff
@@ -104,9 +111,9 @@ def move_to_index(move: chess.Move, board: chess.Board) -> int:
 
 def index_to_move(index: int, board: chess.Board) -> chess.Move | None:
     """Inverse of :func:`move_to_index`. Returns None if the move is illegal."""
-    from_sq = index // 73
+    from_sq_canonical = index // 73
     plane = index % 73
-    fr, ff = chess.square_rank(from_sq), chess.square_file(from_sq)
+    fr, ff = chess.square_rank(from_sq_canonical), chess.square_file(from_sq_canonical)
 
     promotion = None
     if plane < 56:  # sliding
@@ -122,21 +129,31 @@ def index_to_move(index: int, board: chess.Board) -> chess.Move | None:
         dir_idx = p // 3
         piece_idx = p % 3
         d_file = dir_idx - 1
-        # pawn promotes moving "forward" for the side to move
-        d_rank = 1 if board.turn == chess.WHITE else -1
+        # Canonical frame always has side-to-move as white.
+        d_rank = 1
         tr, tf = fr + d_rank, ff + d_file
         promotion = _UNDERPROMO_PIECES[piece_idx]
 
     if not (0 <= tr <= 7 and 0 <= tf <= 7):
         return None
 
-    to_sq = chess.square(tf, tr)
+    to_sq_canonical = chess.square(tf, tr)
+    if board.turn == chess.BLACK:
+        from_sq = chess.square_mirror(from_sq_canonical)
+        to_sq = chess.square_mirror(to_sq_canonical)
+    else:
+        from_sq = from_sq_canonical
+        to_sq = to_sq_canonical
 
     # Infer queen promotion for pawn pushes/captures reaching the last rank.
-    if promotion is None and tr in (0, 7):
+    if promotion is None:
         piece = board.piece_at(from_sq)
+        to_rank = chess.square_rank(to_sq)
         if piece is not None and piece.piece_type == chess.PAWN:
-            promotion = chess.QUEEN
+            if (piece.color == chess.WHITE and to_rank == 7) or (
+                piece.color == chess.BLACK and to_rank == 0
+            ):
+                promotion = chess.QUEEN
 
     move = chess.Move(from_sq, to_sq, promotion=promotion)
     return move if move in board.legal_moves else None
