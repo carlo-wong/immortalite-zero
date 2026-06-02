@@ -311,7 +311,11 @@ def _prune_sample_shards(ckpt_dir: str, keep_samples: int) -> None:
 
     for path in shards:
         if path not in keep:
-            os.remove(path)
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                # A corrupted shard may already have been removed above.
+                pass
 
 
 def _warm_replay_buffer(buffer: deque[Sample], ckpt_dir: str, replay_window: int) -> int:
