@@ -11,6 +11,7 @@ import argparse
 import os
 import random
 import time
+from copy import deepcopy
 from collections import Counter, deque
 from dataclasses import asdict
 
@@ -21,7 +22,7 @@ from tqdm.auto import tqdm
 
 from .config import Config, NetConfig
 from .network import ChessNet, NetEvaluator
-from .selfplay import GameResult, Sample, play_games_batched
+from .selfplay import GameResult, Sample, play_game_gen, play_games_batched
 
 _SAMPLE_SHARD_PREFIX = "samples_iter_"
 _SAMPLE_SHARD_SUFFIX = ".npz"
@@ -35,7 +36,7 @@ def _sims_for_iteration(cfg: Config, it: int) -> int:
     return int(round(t.sims_start + frac * (t.sims_end - t.sims_start)))
 
 
-def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str) -> tuple[float, float]:
+def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str) -> dict[str, float]:
     planes = torch.from_numpy(np.stack([s.planes for s in batch])).to(device)
     target_pi = torch.from_numpy(np.stack([s.policy for s in batch])).to(device)
     target_v = torch.tensor([s.value for s in batch], dtype=torch.float32, device=device)
@@ -48,8 +49,23 @@ def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str) -> tu
 
     optimizer.zero_grad()
     loss.backward()
+    grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1e9)
     optimizer.step()
-    return policy_loss.item(), value_loss.item()
+
+    with torch.no_grad():
+        probs = log_probs.exp()
+        policy_entropy = -(probs * log_probs).sum(dim=1).mean()
+        value_sign_acc = (torch.sign(value) == torch.sign(target_v)).float().mean()
+        policy_top1_agree = (torch.argmax(logits, dim=1) == torch.argmax(target_pi, dim=1)).float().mean()
+
+    return {
+        "policy_loss": float(policy_loss.item()),
+        "value_loss": float(value_loss.item()),
+        "policy_entropy": float(policy_entropy.item()),
+        "value_sign_acc": float(value_sign_acc.item()),
+        "policy_top1_agree": float(policy_top1_agree.item()),
+        "grad_norm": float(grad_norm),
+    }
 
 
 def save_checkpoint(net: ChessNet, cfg: Config, path: str, iteration: int = 0) -> None:
@@ -60,8 +76,14 @@ def save_checkpoint(net: ChessNet, cfg: Config, path: str, iteration: int = 0) -
                 "iteration": iteration}, path)
 
 
-def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int,
-                 pl: float, vl: float, dt: float,
+def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
+                 policy_loss: float, value_loss: float,
+                 policy_entropy: float, value_sign_acc: float,
+                 policy_top1_agree: float, grad_norm: float,
+                 mean_game_len: float, decisive_rate: float,
+                 white_win_rate: float, draw_rate: float,
+                 max_moves_trunc_rate: float, value_mean: float,
+                 value_std: float, winrate_vs_prev: float,
                  termination_counts: dict[str, int]) -> None:
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = os.path.join(ckpt_dir, "metrics.csv")
@@ -69,8 +91,104 @@ def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int,
     terminations = ";".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
     with open(path, "a", encoding="utf-8") as f:
         if new:
-            f.write("iter,sims,samples,policy_loss,value_loss,seconds,terminations\n")
-        f.write(f"{it},{sims},{samples},{pl:.4f},{vl:.4f},{dt:.1f},{terminations}\n")
+            f.write(
+                "iter,sims,samples,seconds,policy_loss,value_loss,"
+                "policy_entropy,value_sign_acc,policy_top1_agree,grad_norm,"
+                "mean_game_len,decisive_rate,white_win_rate,draw_rate,"
+                "max_moves_trunc_rate,value_mean,value_std,winrate_vs_prev,terminations\n"
+            )
+        f.write(
+            f"{it},{sims},{samples},{dt:.1f},{policy_loss:.6f},{value_loss:.6f},"
+            f"{policy_entropy:.6f},{value_sign_acc:.6f},{policy_top1_agree:.6f},{grad_norm:.6f},"
+            f"{mean_game_len:.6f},{decisive_rate:.6f},{white_win_rate:.6f},{draw_rate:.6f},"
+            f"{max_moves_trunc_rate:.6f},{value_mean:.6f},{value_std:.6f},{winrate_vs_prev:.6f},"
+            f"{terminations}\n"
+        )
+
+
+def _log_step_metrics(ckpt_dir: str, it: int, step: int, metrics: dict[str, float]) -> None:
+    os.makedirs(ckpt_dir or ".", exist_ok=True)
+    path = os.path.join(ckpt_dir, "metrics_steps.csv")
+    new = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8") as f:
+        if new:
+            f.write(
+                "iter,step,policy_loss,value_loss,policy_entropy,value_sign_acc,"
+                "policy_top1_agree,grad_norm\n"
+            )
+        f.write(
+            f"{it},{step},"
+            f"{metrics['policy_loss']:.6f},{metrics['value_loss']:.6f},"
+            f"{metrics['policy_entropy']:.6f},{metrics['value_sign_acc']:.6f},"
+            f"{metrics['policy_top1_agree']:.6f},{metrics['grad_norm']:.6f}\n"
+        )
+
+
+def _winner_of(game: GameResult) -> int:
+    """Return +1 for white win, -1 for black win, 0 for non-decisive result."""
+    if game.termination != "checkmate" or not game.samples:
+        return 0
+    first = game.samples[0]
+    if first.value == 0.0:
+        return 0
+    winner_is_first_player = first.value > 0.0
+    winner_is_white = bool(first.player) if winner_is_first_player else not bool(first.player)
+    return 1 if winner_is_white else -1
+
+
+def _latest_snapshot_before(ckpt_dir: str, iteration: int) -> str | None:
+    if not os.path.isdir(ckpt_dir):
+        return None
+    best_iter = -1
+    best_path: str | None = None
+    for name in os.listdir(ckpt_dir):
+        if not (name.startswith("ckpt_iter_") and name.endswith(".pt")):
+            continue
+        idx_text = name[len("ckpt_iter_"):-len(".pt")]
+        if not idx_text.isdigit():
+            continue
+        idx = int(idx_text)
+        if idx < iteration and idx > best_iter:
+            best_iter = idx
+            best_path = os.path.join(ckpt_dir, name)
+    return best_path
+
+
+def _play_match_game(cfg: Config, simulations: int,
+                     white_eval: NetEvaluator, black_eval: NetEvaluator) -> GameResult:
+    gen = play_game_gen(cfg, simulations, add_noise=False, exploration_moves=0)
+    req = next(gen)
+    while True:
+        evaluator = white_eval if req.turn else black_eval
+        logits, value = evaluator.evaluate(req)
+        try:
+            req = gen.send((logits, value))
+        except StopIteration as stop:
+            return stop.value
+
+
+def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
+               n_games: int, sims: int, device: str) -> float:
+    if n_games <= 0:
+        return float("nan")
+
+    match_cfg = deepcopy(cfg)
+    match_cfg.beauty.enabled = False
+
+    eval_a = NetEvaluator(net_a, device=device)
+    eval_b = NetEvaluator(net_b, device=device)
+    score = 0.0
+    for game_idx in range(n_games):
+        a_is_white = (game_idx % 2 == 0)
+        white_eval = eval_a if a_is_white else eval_b
+        black_eval = eval_b if a_is_white else eval_a
+        game = _play_match_game(match_cfg, sims, white_eval, black_eval)
+        winner = _winner_of(game)
+        if winner == 0:
+            score += 0.5
+        elif (winner == 1 and a_is_white) or (winner == -1 and not a_is_white):
+            score += 1.0
+    return score / n_games
 
 
 def _sample_shard_path(ckpt_dir: str, iteration: int) -> str:
@@ -193,6 +311,10 @@ def main() -> None:
                         help="concurrent self-play games to batch on GPU")
     parser.add_argument("--replay-window", type=int, default=None,
                         help="max persisted replay samples kept on disk")
+    parser.add_argument("--gate-every", type=int, default=0,
+                        help="run strength gate every N iterations (0 = off)")
+    parser.add_argument("--gate-games", type=int, default=20,
+                        help="games per strength gate (current net vs previous snapshot)")
     args = parser.parse_args()
 
     cfg = Config()
@@ -256,6 +378,8 @@ def main() -> None:
         new_samples = 0
         iteration_samples: list[Sample] = []
         termination_counts: Counter[str] = Counter()
+        game_lengths: list[int] = []
+        game_outcomes: list[int] = []
         n_games = cfg.train.games_per_iteration
         game_bar = tqdm(total=n_games, desc=f"iter {it} self-play", unit="game", leave=False)
 
@@ -265,6 +389,8 @@ def main() -> None:
             iteration_samples.extend(game.samples)
             new_samples += len(game.samples)
             termination_counts[game.termination] += 1
+            game_lengths.append(len(game.samples))
+            game_outcomes.append(_winner_of(game))
             game_bar.set_postfix(moves=len(game.samples), buffer=len(buffer))
             game_bar.update(1)
 
@@ -282,16 +408,21 @@ def main() -> None:
         _prune_sample_shards(cfg.train.checkpoint_dir, cfg.train.replay_window)
 
         net.train()
-        p_losses, v_losses = [], []
+        step_metrics: dict[str, list[float]] = {}
         if len(buffer) >= cfg.train.batch_size:
             train_bar = tqdm(range(cfg.train.train_steps_per_iteration),
                              desc=f"iter {it} train", unit="step", leave=False)
-            for _ in train_bar:
+            for step in train_bar:
                 batch = random.sample(buffer, cfg.train.batch_size)
-                pl, vl = train_step(net, optimizer, batch, args.device)
-                p_losses.append(pl)
-                v_losses.append(vl)
-                train_bar.set_postfix(p=f"{pl:.3f}", v=f"{vl:.3f}")
+                step_result = train_step(net, optimizer, batch, args.device)
+                for name, value in step_result.items():
+                    step_metrics.setdefault(name, []).append(value)
+                _log_step_metrics(cfg.train.checkpoint_dir, it, int(step), step_result)
+                train_bar.set_postfix(
+                    p=f"{step_result['policy_loss']:.3f}",
+                    v=f"{step_result['value_loss']:.3f}",
+                    g=f"{step_result['grad_norm']:.2f}",
+                )
         net.eval()
 
         save_checkpoint(net, cfg, os.path.join(cfg.train.checkpoint_dir, "latest.pt"), it)
@@ -299,16 +430,88 @@ def main() -> None:
             snap = os.path.join(cfg.train.checkpoint_dir, f"ckpt_iter_{it:04d}.pt")
             save_checkpoint(net, cfg, snap, it)
 
+        def _mean_metric(name: str) -> float:
+            values = step_metrics.get(name)
+            return float(np.mean(values)) if values else float("nan")
+
         dt = time.time() - t0
-        pl = np.mean(p_losses) if p_losses else float("nan")
-        vl = np.mean(v_losses) if v_losses else float("nan")
+        pl = _mean_metric("policy_loss")
+        vl = _mean_metric("value_loss")
+        policy_entropy = _mean_metric("policy_entropy")
+        value_sign_acc = _mean_metric("value_sign_acc")
+        policy_top1_agree = _mean_metric("policy_top1_agree")
+        grad_norm = _mean_metric("grad_norm")
+
+        total_games = len(game_lengths)
+        white_wins = sum(1 for o in game_outcomes if o == 1)
+        black_wins = sum(1 for o in game_outcomes if o == -1)
+        draws_or_other = total_games - white_wins - black_wins
+        mean_game_len = float(np.mean(game_lengths)) if game_lengths else float("nan")
+        decisive_rate = (
+            termination_counts.get("checkmate", 0) / total_games if total_games else float("nan")
+        )
+        white_win_rate = white_wins / total_games if total_games else float("nan")
+        draw_rate = draws_or_other / total_games if total_games else float("nan")
+        max_moves_trunc_rate = (
+            termination_counts.get("max_moves", 0) / total_games if total_games else float("nan")
+        )
+        value_targets = np.array([s.value for s in iteration_samples], dtype=np.float32)
+        value_mean = float(value_targets.mean()) if value_targets.size else float("nan")
+        value_std = float(value_targets.std()) if value_targets.size else float("nan")
+
+        winrate_vs_prev = float("nan")
+        if args.gate_every > 0 and it > 0 and it % args.gate_every == 0:
+            previous_snapshot = _latest_snapshot_before(cfg.train.checkpoint_dir, it)
+            if previous_snapshot is None:
+                print(f"gate iter {it}: skipped (no prior numbered snapshot found)")
+            else:
+                prev_state = torch.load(previous_snapshot, map_location=args.device)
+                if isinstance(prev_state, dict) and "model" in prev_state:
+                    prev_net_cfg = cfg.net
+                    if "net" in prev_state:
+                        prev_net_cfg = NetConfig(**prev_state["net"])
+                    prev_net = ChessNet(prev_net_cfg).to(args.device)
+                    prev_net.load_state_dict(prev_state["model"])
+                    winrate_vs_prev = play_match(
+                        net, prev_net, cfg, n_games=args.gate_games, sims=sims, device=args.device
+                    )
+                    print(
+                        f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
+                        f"-> {winrate_vs_prev:.3f}"
+                    )
+                else:
+                    print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")
+
         term_summary = ", ".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
         print(f"iter {it:3d} | sims {sims:3d} | games {cfg.train.games_per_iteration} "
               f"| samples {new_samples:4d} | buffer {len(buffer):6d} "
-              f"| policy_loss {pl:.3f} | value_loss {vl:.3f} | ends {term_summary} "
+              f"| policy_loss {pl:.3f} | value_loss {vl:.3f} "
+              f"| ent {policy_entropy:.3f} | sign_acc {value_sign_acc:.3f} "
+              f"| decisive {decisive_rate:.3f} | gate {winrate_vs_prev:.3f} "
+              f"| ends {term_summary} "
               f"| {dt:.1f}s", flush=True)
-        _log_metrics(cfg.train.checkpoint_dir, it, sims, new_samples, pl, vl, dt,
-                     dict(termination_counts))
+        _log_metrics(
+            cfg.train.checkpoint_dir,
+            it,
+            sims,
+            new_samples,
+            dt,
+            policy_loss=pl,
+            value_loss=vl,
+            policy_entropy=policy_entropy,
+            value_sign_acc=value_sign_acc,
+            policy_top1_agree=policy_top1_agree,
+            grad_norm=grad_norm,
+            mean_game_len=mean_game_len,
+            decisive_rate=decisive_rate,
+            white_win_rate=white_win_rate,
+            draw_rate=draw_rate,
+            max_moves_trunc_rate=max_moves_trunc_rate,
+            value_mean=value_mean,
+            value_std=value_std,
+            winrate_vs_prev=winrate_vs_prev,
+            termination_counts=dict(termination_counts),
+        )
 
 
 if __name__ == "__main__":

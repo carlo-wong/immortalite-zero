@@ -47,7 +47,8 @@ class _ActiveGame:
     pending_board: chess.Board
 
 
-def play_game_gen(cfg: Config, simulations: int
+def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
+                  exploration_moves: int = _EXPLORATION_MOVES
                   ) -> Generator[chess.Board, tuple[np.ndarray, float], GameResult]:
     board = chess.Board()
     mcts = MCTS(None, cfg.mcts)
@@ -56,7 +57,7 @@ def play_game_gen(cfg: Config, simulations: int
     no_legal_moves = False
 
     while not board.is_game_over(claim_draw=True) and move_count < cfg.train.max_game_moves:
-        search = mcts.search_gen(board, simulations=simulations, add_noise=True)
+        search = mcts.search_gen(board, simulations=simulations, add_noise=add_noise)
         req = next(search)
         while True:
             logits, value = yield req
@@ -75,7 +76,7 @@ def play_game_gen(cfg: Config, simulations: int
             policy[idx] = p
         samples.append(Sample(board_to_planes(board), policy, board.turn))
 
-        if move_count < _EXPLORATION_MOVES:
+        if move_count < exploration_moves:
             choice = np.random.choice(len(result.moves), p=improved / improved.sum())
             move = result.moves[choice]
         else:
