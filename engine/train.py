@@ -29,6 +29,8 @@ from .selfplay import GameResult, Sample, play_game_gen, play_games_batched
 
 _SAMPLE_SHARD_PREFIX = "samples_iter_"
 _SAMPLE_SHARD_SUFFIX = ".npz"
+_SELFPLAY_HEARTBEAT_EVERY = 25
+_GATE_HEARTBEAT_EVERY = 4
 
 
 def _sims_for_iteration(cfg: Config, it: int) -> int:
@@ -233,7 +235,8 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
         def _on_gate_move(move_idx: int) -> None:
             nonlocal gate_moves
             gate_moves = move_idx
-            gate_bar.set_postfix(moves=move_idx)
+            if move_idx == 1 or move_idx % _GATE_HEARTBEAT_EVERY == 0:
+                gate_bar.set_postfix(moves=move_idx)
 
         game = _play_match_game(match_cfg, sims, white_eval, black_eval, on_move=_on_gate_move)
         winner = _winner_of(game)
@@ -520,7 +523,8 @@ def main() -> None:
             nonlocal eval_batches, active_games
             active_games = active
             eval_batches += 1
-            game_bar.set_postfix(active=active_games, evals=eval_batches, buffer=len(buffer))
+            if eval_batches == 1 or eval_batches % _SELFPLAY_HEARTBEAT_EVERY == 0:
+                game_bar.set_postfix(active=active_games, evals=eval_batches, buffer=len(buffer))
 
         def _on_game(game: GameResult) -> None:
             nonlocal new_samples
