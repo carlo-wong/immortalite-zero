@@ -32,6 +32,7 @@ class ChessNet(nn.Module):
         super().__init__()
         cfg = cfg or NetConfig()
         f = cfg.filters
+        self.value_bins = cfg.value_bins
 
         self.stem = nn.Sequential(
             nn.Conv2d(NUM_INPUT_PLANES, f, 3, padding=1, bias=False),
@@ -51,7 +52,8 @@ class ChessNet(nn.Module):
             nn.Conv2d(f, 8, 1, bias=False), nn.BatchNorm2d(8), nn.ReLU(inplace=True)
         )
         self.value_fc1 = nn.Linear(8 * 8 * 8, 128)
-        self.value_fc2 = nn.Linear(128, 1)
+        self.value_fc2 = nn.Linear(128, self.value_bins)
+        self.register_buffer("value_support", torch.linspace(-1.0, 1.0, self.value_bins))
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         x = self.stem(x)
@@ -62,8 +64,12 @@ class ChessNet(nn.Module):
 
         v = self.value_conv(x).flatten(1)
         v = F.relu(self.value_fc1(v))
-        v = torch.tanh(self.value_fc2(v))  # [-1, 1] from side-to-move perspective
-        return p, v.squeeze(-1)
+        value_logits = self.value_fc2(v)
+        return p, value_logits
+
+    def value_from_logits(self, value_logits: torch.Tensor) -> torch.Tensor:
+        probs = F.softmax(value_logits.float(), dim=-1)
+        return torch.sum(probs * self.value_support, dim=-1)
 
 
 class NetEvaluator:
@@ -80,9 +86,10 @@ class NetEvaluator:
         x = torch.from_numpy(board_to_planes(board)).unsqueeze(0).to(self.device)
         if self._use_cuda_autocast:
             with torch.autocast(device_type="cuda", dtype=torch.float16):
-                logits, value = self.net(x)
+                logits, value_logits = self.net(x)
         else:
-            logits, value = self.net(x)
+            logits, value_logits = self.net(x)
+        value = self.net.value_from_logits(value_logits)
         return logits[0].float().cpu().numpy(), float(value[0].float().cpu())
 
     @torch.inference_mode()
@@ -91,7 +98,8 @@ class NetEvaluator:
         x = torch.from_numpy(x).to(self.device)
         if self._use_cuda_autocast:
             with torch.autocast(device_type="cuda", dtype=torch.float16):
-                logits, value = self.net(x)
+                logits, value_logits = self.net(x)
         else:
-            logits, value = self.net(x)
+            logits, value_logits = self.net(x)
+        value = self.net.value_from_logits(value_logits)
         return logits.float().cpu().numpy(), value.float().cpu().numpy()

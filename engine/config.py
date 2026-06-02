@@ -10,6 +10,7 @@ class NetConfig:
     # "Light" by default: small enough to run on CPU, big enough to be sound.
     blocks: int = 6
     filters: int = 64
+    value_bins: int = 51
 
 
 @dataclass

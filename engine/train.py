@@ -38,15 +38,45 @@ def _sims_for_iteration(cfg: Config, it: int) -> int:
     return int(round(t.sims_start + frac * (t.sims_end - t.sims_start)))
 
 
+def _gaussian_value_targets(target_v: torch.Tensor, support: torch.Tensor,
+                            sigma: float) -> torch.Tensor:
+    diff = support.unsqueeze(0) - target_v.unsqueeze(1)
+    dist = torch.exp(-0.5 * (diff / sigma) ** 2)
+    return dist / dist.sum(dim=1, keepdim=True).clamp_min(1e-12)
+
+
+def _load_matching_state_dict(module: torch.nn.Module, state_dict: dict,
+                              *, label: str, verbose: bool = True) -> None:
+    module_state = module.state_dict()
+    matched: dict[str, torch.Tensor] = {}
+    skipped = 0
+    for key, value in state_dict.items():
+        if key in module_state and module_state[key].shape == value.shape:
+            matched[key] = value
+        else:
+            skipped += 1
+    result = module.load_state_dict(matched, strict=False)
+    if verbose:
+        reinitialized = len(result.missing_keys)
+        print(f"{label}: loaded {len(matched)} tensors, "
+              f"reinitialized {reinitialized}, skipped {skipped}")
+
+
 def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str) -> dict[str, float]:
     planes = torch.from_numpy(np.stack([s.planes for s in batch])).to(device)
     target_pi = torch.from_numpy(np.stack([s.policy for s in batch])).to(device)
     target_v = torch.tensor([s.value for s in batch], dtype=torch.float32, device=device)
 
-    logits, value = net(planes)
+    logits, value_logits = net(planes)
+    value = net.value_from_logits(value_logits)
     log_probs = F.log_softmax(logits, dim=1)
     policy_loss = -(target_pi * log_probs).sum(dim=1).mean()
-    value_loss = F.mse_loss(value, target_v)
+    value_log_probs = F.log_softmax(value_logits, dim=1)
+    bins = max(2, int(net.value_support.numel()))
+    bin_width = 2.0 / (bins - 1)
+    sigma = 0.75 * bin_width
+    target_v_dist = _gaussian_value_targets(target_v, net.value_support, sigma)
+    value_loss = -(target_v_dist * value_log_probs).sum(dim=1).mean()
     loss = policy_loss + value_loss
 
     optimizer.zero_grad()
@@ -422,7 +452,8 @@ def main() -> None:
             cfg.net = NetConfig(**state["net"])
     net = ChessNet(cfg.net).to(args.device)
     if state is not None:
-        net.load_state_dict(state["model"])
+        model_state = state["model"] if isinstance(state, dict) and "model" in state else state
+        _load_matching_state_dict(net, model_state, label="resume load")
         start_iter = int(state.get("iteration", -1)) + 1
         print(f"resumed from {args.resume} at iteration {start_iter} "
               f"(net: {cfg.net.blocks}x{cfg.net.filters})")
@@ -544,7 +575,12 @@ def main() -> None:
                         if "net" in prev_state:
                             prev_net_cfg = NetConfig(**prev_state["net"])
                         prev_net = ChessNet(prev_net_cfg).to(args.device)
-                        prev_net.load_state_dict(prev_state["model"])
+                        prev_model = (
+                            prev_state["model"]
+                            if isinstance(prev_state, dict) and "model" in prev_state
+                            else prev_state
+                        )
+                        _load_matching_state_dict(prev_net, prev_model, label="gate load", verbose=False)
                         winrate_vs_prev = play_match(
                             net, prev_net, cfg, n_games=args.gate_games, sims=sims, device=args.device
                         )

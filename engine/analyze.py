@@ -31,7 +31,13 @@ def load_evaluator(checkpoint_path: str | None, cfg: Config, device: str = "cpu"
             net_cfg = NetConfig(**state["net"])  # rebuild matching architecture
     net = ChessNet(net_cfg)
     if state is not None:
-        net.load_state_dict(state["model"] if "model" in state else state)
+        model_state = state["model"] if "model" in state else state
+        net_state = net.state_dict()
+        matched = {
+            k: v for k, v in model_state.items()
+            if k in net_state and net_state[k].shape == v.shape
+        }
+        net.load_state_dict(matched, strict=False)
     return NetEvaluator(net, device=device)
 
 
