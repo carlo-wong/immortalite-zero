@@ -15,7 +15,6 @@ import zipfile
 from copy import deepcopy
 from collections import Counter, deque
 from dataclasses import asdict
-from typing import Callable
 
 import numpy as np
 import torch
@@ -29,8 +28,6 @@ from .selfplay import GameResult, Sample, play_game_gen, play_games_batched
 
 _SAMPLE_SHARD_PREFIX = "samples_iter_"
 _SAMPLE_SHARD_SUFFIX = ".npz"
-_SELFPLAY_HEARTBEAT_EVERY = 25
-_GATE_HEARTBEAT_EVERY = 4
 
 
 def _sims_for_iteration(cfg: Config, it: int) -> int:
@@ -197,19 +194,14 @@ def _latest_snapshot_before(ckpt_dir: str, iteration: int) -> str | None:
 
 
 def _play_match_game(cfg: Config, simulations: int,
-                     white_eval: NetEvaluator, black_eval: NetEvaluator,
-                     on_move: Callable[[int], None] | None = None) -> GameResult:
+                     white_eval: NetEvaluator, black_eval: NetEvaluator) -> GameResult:
     gen = play_game_gen(cfg, simulations, add_noise=False, exploration_moves=0)
     req = next(gen)
-    move_idx = 0
     while True:
         evaluator = white_eval if req.turn else black_eval
         logits, value = evaluator.evaluate(req)
         try:
             req = gen.send((logits, value))
-            move_idx += 1
-            if on_move is not None:
-                on_move(move_idx)
         except StopIteration as stop:
             return stop.value
 
@@ -230,21 +222,13 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
         a_is_white = (game_idx % 2 == 0)
         white_eval = eval_a if a_is_white else eval_b
         black_eval = eval_b if a_is_white else eval_a
-        gate_moves = 0
-
-        def _on_gate_move(move_idx: int) -> None:
-            nonlocal gate_moves
-            gate_moves = move_idx
-            if move_idx == 1 or move_idx % _GATE_HEARTBEAT_EVERY == 0:
-                gate_bar.set_postfix(moves=move_idx)
-
-        game = _play_match_game(match_cfg, sims, white_eval, black_eval, on_move=_on_gate_move)
+        game = _play_match_game(match_cfg, sims, white_eval, black_eval)
         winner = _winner_of(game)
         if winner == 0:
             score += 0.5
         elif (winner == 1 and a_is_white) or (winner == -1 and not a_is_white):
             score += 1.0
-        gate_bar.set_postfix(score=f"{score / (game_idx + 1):.3f}", moves=gate_moves)
+        gate_bar.set_postfix(score=f"{score / (game_idx + 1):.3f}")
     gate_bar.close()
     return score / n_games
 
@@ -292,18 +276,6 @@ def _shard_encoding_version(data: np.lib.npyio.NpzFile) -> int:
     return int(version_raw[0])
 
 
-def _count_samples_in_shard(path: str) -> int:
-    try:
-        with np.load(path) as data:
-            if _shard_encoding_version(data) != ENCODING_VERSION:
-                return 0
-            key = "values" if "values" in data else "value"
-            return int(data[key].shape[0])
-    except (ValueError, OSError, EOFError, zipfile.BadZipFile, KeyError) as exc:
-        print(f"warning: unreadable shard {os.path.basename(path)} ({exc}); deleting it")
-        return -1
-
-
 def _load_sample_shard(path: str) -> list[Sample]:
     try:
         with np.load(path) as data:
@@ -329,49 +301,7 @@ def _load_sample_shard(path: str) -> list[Sample]:
         return []
 
 
-def _prune_sample_shards(ckpt_dir: str, keep_samples: int, *,
-                         show_progress: bool = False) -> None:
-    if keep_samples <= 0:
-        return
-    shards = _list_sample_shards(ckpt_dir)
-    if not shards:
-        return
-
-    keep: set[str] = set()
-    total = 0
-    shard_scan = list(reversed(shards))
-    shard_iter = (
-        tqdm(shard_scan, desc="scanning shards", unit="shard", leave=False)
-        if show_progress else shard_scan
-    )
-    for path in shard_iter:
-        sample_count = _count_samples_in_shard(path)
-        if sample_count < 0:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-            continue
-        if sample_count <= 0:
-            # Preserve incompatible legacy shards; they are ignored for replay.
-            keep.add(path)
-            continue
-        keep.add(path)
-        total += sample_count
-        if total >= keep_samples:
-            break
-
-    for path in shards:
-        if path not in keep:
-            try:
-                os.remove(path)
-            except FileNotFoundError:
-                # A corrupted shard may already have been removed above.
-                pass
-
-
-def _warm_replay_buffer(buffer: deque[Sample], ckpt_dir: str, replay_window: int, *,
-                        show_progress: bool = False) -> int:
+def _warm_replay_buffer(buffer: deque[Sample], ckpt_dir: str, replay_window: int) -> int:
     if replay_window <= 0:
         return 0
     maxlen = buffer.maxlen if buffer.maxlen is not None else replay_window
@@ -382,12 +312,7 @@ def _warm_replay_buffer(buffer: deque[Sample], ckpt_dir: str, replay_window: int
     shards = _list_sample_shards(ckpt_dir)
     chosen_chunks: list[list[Sample]] = []
     remaining = target
-    shard_load = list(reversed(shards))
-    shard_iter = (
-        tqdm(shard_load, desc="warming buffer", unit="shard", leave=False)
-        if show_progress else shard_load
-    )
-    for path in shard_iter:
+    for path in reversed(shards):
         if remaining <= 0:
             break
         shard_samples = _load_sample_shard(path)
@@ -495,15 +420,11 @@ def main() -> None:
     optimizer = torch.optim.Adam(net.parameters(), lr=cfg.train.learning_rate,
                                  weight_decay=cfg.train.weight_decay)
     buffer: deque[Sample] = deque(maxlen=cfg.train.replay_buffer_size)
-    _prune_sample_shards(cfg.train.checkpoint_dir, cfg.train.replay_window, show_progress=True)
-    loaded = _warm_replay_buffer(
-        buffer, cfg.train.checkpoint_dir, cfg.train.replay_window, show_progress=True
-    )
+    loaded = _warm_replay_buffer(buffer, cfg.train.checkpoint_dir, cfg.train.replay_window)
     if loaded:
         print(f"warmed replay buffer with {loaded} samples from shard files")
 
-    outer_bar = tqdm(range(args.iterations), desc="iterations", unit="iter", leave=True)
-    for local_it in outer_bar:
+    for local_it in range(args.iterations):
         it = start_iter + local_it
         sims = _sims_for_iteration(cfg, it)
         evaluator = NetEvaluator(net, device=args.device)
@@ -515,16 +436,7 @@ def main() -> None:
         game_lengths: list[int] = []
         game_outcomes: list[int] = []
         n_games = cfg.train.games_per_iteration
-        eval_batches = 0
-        active_games = 0
         game_bar = tqdm(total=n_games, desc=f"iter {it} self-play", unit="game", leave=False)
-
-        def _on_step(active: int) -> None:
-            nonlocal eval_batches, active_games
-            active_games = active
-            eval_batches += 1
-            if eval_batches == 1 or eval_batches % _SELFPLAY_HEARTBEAT_EVERY == 0:
-                game_bar.set_postfix(active=active_games, evals=eval_batches, buffer=len(buffer))
 
         def _on_game(game: GameResult) -> None:
             nonlocal new_samples
@@ -534,9 +446,7 @@ def main() -> None:
             termination_counts[game.termination] += 1
             game_lengths.append(len(game.samples))
             game_outcomes.append(_winner_of(game))
-            game_bar.set_postfix(
-                moves=len(game.samples), active=active_games, evals=eval_batches, buffer=len(buffer)
-            )
+            game_bar.set_postfix(moves=len(game.samples), buffer=len(buffer))
             game_bar.update(1)
 
         play_games_batched(
@@ -546,12 +456,10 @@ def main() -> None:
             num_games=n_games,
             concurrency=cfg.train.selfplay_concurrency,
             on_game_finished=_on_game,
-            on_step=_on_step,
         )
         game_bar.close()
 
         _save_sample_shard(cfg.train.checkpoint_dir, it, iteration_samples)
-        _prune_sample_shards(cfg.train.checkpoint_dir, cfg.train.replay_window)
 
         net.train()
         step_metrics: dict[str, list[float]] = {}
@@ -670,8 +578,6 @@ def main() -> None:
             winrate_vs_prev=winrate_vs_prev,
             termination_counts=dict(termination_counts),
         )
-        outer_bar.set_postfix(it=it, p=f"{pl:.3f}", v=f"{vl:.3f}", s=f"{dt:.0f}s")
-    outer_bar.close()
 
 
 if __name__ == "__main__":
