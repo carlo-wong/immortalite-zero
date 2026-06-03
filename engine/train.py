@@ -165,7 +165,7 @@ def _log_step_metrics(ckpt_dir: str, it: int, step: int, metrics: dict[str, floa
 
 def _winner_of(game: GameResult) -> int:
     """Return +1 for white win, -1 for black win, 0 for non-decisive result."""
-    if game.termination != "checkmate" or not game.samples:
+    if game.termination not in {"checkmate", "resign"} or not game.samples:
         return 0
     first = game.samples[0]
     if first.value == 0.0:
@@ -341,6 +341,22 @@ def main() -> None:
     parser.add_argument("--games", type=int, default=None, help="self-play games per iteration")
     parser.add_argument("--sims", type=int, default=None, help="fixed MCTS sims/move (disables ramp)")
     parser.add_argument("--train-steps", type=int, default=None, help="optimizer steps per iteration")
+    parser.add_argument(
+        "--c1-stage",
+        choices=["off", "24", "32", "48", "64"],
+        default="off",
+        help="throughput ramp profile: sets games/train-steps/concurrency for C1",
+    )
+    parser.add_argument("--max-game-moves", type=int, default=None,
+                        help="self-play truncation cap (C2 shaping)")
+    parser.add_argument("--draw-penalty", type=float, default=None,
+                        help="target for draw outcomes (C2 shaping)")
+    parser.add_argument("--resign-threshold", type=float, default=None,
+                        help="enable resignation when root value <= threshold")
+    parser.add_argument("--resign-plies", type=int, default=None,
+                        help="consecutive plies below threshold before resignation")
+    parser.add_argument("--resign-min-moves", type=int, default=None,
+                        help="minimum plies before resignation can trigger")
     parser.add_argument("--light", action="store_true",
                         help="CPU-friendly preset: small net, few games/sims")
     parser.add_argument("--gpu", action="store_true",
@@ -378,6 +394,17 @@ def main() -> None:
         cfg.train.selfplay_concurrency = 64
         cfg.train.train_steps_per_iteration = 300
         cfg.train.sims_start, cfg.train.sims_end = 48, 128
+    c1_profiles = {
+        "24": (24, 480, 24),
+        "32": (32, 640, 32),
+        "48": (48, 960, 48),
+        "64": (64, 1280, 64),
+    }
+    if args.c1_stage != "off":
+        games, steps, concurrency = c1_profiles[args.c1_stage]
+        cfg.train.games_per_iteration = games
+        cfg.train.train_steps_per_iteration = steps
+        cfg.train.selfplay_concurrency = concurrency
     if args.games is not None:
         cfg.train.games_per_iteration = args.games
     if args.train_steps is not None:
@@ -388,8 +415,29 @@ def main() -> None:
         cfg.train.selfplay_concurrency = args.concurrency
     if args.replay_window is not None:
         cfg.train.replay_window = args.replay_window
+    if args.max_game_moves is not None:
+        cfg.train.max_game_moves = args.max_game_moves
+    if args.draw_penalty is not None:
+        cfg.train.draw_penalty = args.draw_penalty
+    if args.resign_threshold is not None:
+        cfg.train.resign_threshold = args.resign_threshold
+    if args.resign_plies is not None:
+        cfg.train.resign_plies = args.resign_plies
+    if args.resign_min_moves is not None:
+        cfg.train.resign_min_moves = args.resign_min_moves
     # Keep self-play search contempt aligned with the draw target shaping.
     cfg.mcts.draw_contempt = cfg.train.draw_penalty
+    print(
+        "config: "
+        f"games={cfg.train.games_per_iteration} "
+        f"steps={cfg.train.train_steps_per_iteration} "
+        f"concurrency={cfg.train.selfplay_concurrency} "
+        f"max_moves={cfg.train.max_game_moves} "
+        f"draw_penalty={cfg.train.draw_penalty:.3f} "
+        f"resign_threshold={cfg.train.resign_threshold:.3f} "
+        f"resign_plies={cfg.train.resign_plies} "
+        f"resign_min_moves={cfg.train.resign_min_moves}"
+    )
 
     # When resuming, the checkpoint's own architecture wins over the CLI preset
     # (you cannot change net size mid-training). To train a fresh net of a
@@ -501,9 +549,8 @@ def main() -> None:
         black_wins = sum(1 for o in game_outcomes if o == -1)
         draws_or_other = total_games - white_wins - black_wins
         mean_game_len = float(np.mean(game_lengths)) if game_lengths else float("nan")
-        decisive_rate = (
-            termination_counts.get("checkmate", 0) / total_games if total_games else float("nan")
-        )
+        decisive_games = termination_counts.get("checkmate", 0) + termination_counts.get("resign", 0)
+        decisive_rate = decisive_games / total_games if total_games else float("nan")
         white_win_rate = white_wins / total_games if total_games else float("nan")
         draw_rate = draws_or_other / total_games if total_games else float("nan")
         max_moves_trunc_rate = (

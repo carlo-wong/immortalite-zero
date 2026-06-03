@@ -55,6 +55,8 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
     samples: list[Sample] = []
     move_count = 0
     no_legal_moves = False
+    resigned_winner: chess.Color | None = None
+    low_value_streak = 0
 
     while not board.is_game_over(claim_draw=True) and move_count < cfg.train.max_game_moves:
         search = mcts.search_gen(board, simulations=simulations, add_noise=add_noise)
@@ -76,6 +78,19 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
             policy[idx] = p
         samples.append(Sample(board_to_planes(board), policy, board.turn))
 
+        resign_enabled = cfg.train.resign_plies > 0 and cfg.train.resign_threshold >= -1.0
+        if resign_enabled and move_count >= cfg.train.resign_min_moves:
+            if result.root_value <= cfg.train.resign_threshold:
+                low_value_streak += 1
+            else:
+                low_value_streak = 0
+            if low_value_streak >= cfg.train.resign_plies:
+                # Side to move resigns; opponent is the winner.
+                resigned_winner = not board.turn
+                break
+        else:
+            low_value_streak = 0
+
         if move_count < exploration_moves:
             choice = np.random.choice(len(result.moves), p=improved / improved.sum())
             move = result.moves[choice]
@@ -86,10 +101,11 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
         move_count += 1
 
     outcome = board.outcome(claim_draw=True)
-    hit_max_moves = move_count >= cfg.train.max_game_moves and outcome is None
+    resigned = resigned_winner is not None
+    hit_max_moves = move_count >= cfg.train.max_game_moves and outcome is None and not resigned
     termination = _termination_reason(outcome, hit_max_moves=hit_max_moves,
-                                      no_legal_moves=no_legal_moves)
-    _assign_values(samples, outcome, termination, cfg, move_count)
+                                      no_legal_moves=no_legal_moves, resigned=resigned)
+    _assign_values(samples, outcome, termination, cfg, move_count, winner_override=resigned_winner)
     return GameResult(samples=samples, termination=termination)
 
 
@@ -146,7 +162,9 @@ def play_games_batched(evaluator: NetEvaluator, cfg: Config, simulations: int,
 
 
 def _termination_reason(outcome: chess.Outcome | None, *,
-                        hit_max_moves: bool, no_legal_moves: bool) -> str:
+                        hit_max_moves: bool, no_legal_moves: bool, resigned: bool = False) -> str:
+    if resigned:
+        return "resign"
     if outcome is not None:
         if outcome.termination == chess.Termination.CHECKMATE:
             return "checkmate"
@@ -163,11 +181,12 @@ def _termination_reason(outcome: chess.Outcome | None, *,
 
 
 def _assign_values(samples: list[Sample], outcome: chess.Outcome | None,
-                   termination: str, cfg: Config, move_count: int) -> None:
-    winner = outcome.winner if outcome is not None else None
-    if termination == "checkmate" and winner is not None:
+                   termination: str, cfg: Config, move_count: int,
+                   winner_override: chess.Color | None = None) -> None:
+    winner = winner_override if winner_override is not None else (outcome.winner if outcome is not None else None)
+    if termination in {"checkmate", "resign"} and winner is not None:
         target = 1.0
-        if cfg.train.fast_mate_bonus > 0.0:
+        if termination == "checkmate" and cfg.train.fast_mate_bonus > 0.0:
             target += cfg.train.fast_mate_bonus / max(1, move_count)
     elif termination in _DRAW_TERMINATION_SET:
         # Contempt: a small negative target discourages dull draws,
@@ -178,7 +197,7 @@ def _assign_values(samples: list[Sample], outcome: chess.Outcome | None,
         target = 0.0
 
     for s in samples:
-        if termination == "checkmate" and winner is not None:
+        if termination in {"checkmate", "resign"} and winner is not None:
             s.value = target if s.player == winner else -target
         else:
             s.value = target

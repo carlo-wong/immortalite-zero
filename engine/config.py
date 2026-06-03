@@ -56,6 +56,10 @@ class TrainConfig:
     max_game_moves: int = 200
     # Reward shaping for "beautiful" play.
     draw_penalty: float = 0.10      # discourage dull draws -> more decisive play
+    # Optional self-play resignation. Disabled by default.
+    resign_threshold: float = -1.1  # enable with value in [-1, 1]
+    resign_plies: int = 0            # consecutive plies below threshold before resign
+    resign_min_moves: int = 0        # do not allow resignation before this many plies
     fast_mate_bonus: float = 0.0    # >0 rewards quicker checkmates
     # Progressive simulation: start cheap, ramp up (MiniZero trick).
     sims_start: int = 30
