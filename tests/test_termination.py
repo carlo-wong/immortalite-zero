@@ -105,7 +105,7 @@ def test_fifty_move_rule_gets_draw_penalty() -> None:
     assert all(s.value == -cfg.train.draw_penalty for s in samples)
 
 
-def test_max_game_moves_is_neutral_not_draw_penalty() -> None:
+def test_max_game_moves_bootstraps_from_final_root_value() -> None:
     cfg = Config()
     cfg.train.max_game_moves = 1
     cfg.mcts.simulations = 4
@@ -113,7 +113,21 @@ def test_max_game_moves_is_neutral_not_draw_penalty() -> None:
 
     assert game.termination == "max_moves"
     assert len(game.samples) == 1
-    assert all(s.value == 0.0 for s in game.samples)
+    assert all(np.isclose(s.value, 0.8) for s in game.samples)
+
+
+def test_max_game_moves_bootstrap_flips_by_side_to_move() -> None:
+    cfg = Config()
+    cfg.train.max_game_moves = 2
+    cfg.mcts.simulations = 4
+    game = play_game(FakeEvaluator(value=0.6), cfg, simulations=4)
+
+    assert game.termination == "max_moves"
+    assert len(game.samples) == 2
+    assert game.samples[0].player == chess.WHITE
+    assert game.samples[1].player == chess.BLACK
+    assert np.isclose(game.samples[0].value, -0.6)
+    assert np.isclose(game.samples[1].value, 0.6)
 
 
 def test_mcts_treats_claimable_draws_as_terminal() -> None:

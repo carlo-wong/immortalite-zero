@@ -57,6 +57,7 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
     no_legal_moves = False
     resigned_winner: chess.Color | None = None
     low_value_streak = 0
+    last_root_value = 0.0
 
     while not board.is_game_over(claim_draw=True) and move_count < cfg.train.max_game_moves:
         search = mcts.search_gen(board, simulations=simulations, add_noise=add_noise)
@@ -73,6 +74,7 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
             break
 
         improved = result.improved_policy()
+        last_root_value = float(result.root_value)
         policy = np.zeros(POLICY_SIZE, dtype=np.float32)
         for idx, p in zip(result.indices, improved):
             policy[idx] = p
@@ -105,7 +107,15 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
     hit_max_moves = move_count >= cfg.train.max_game_moves and outcome is None and not resigned
     termination = _termination_reason(outcome, hit_max_moves=hit_max_moves,
                                       no_legal_moves=no_legal_moves, resigned=resigned)
-    _assign_values(samples, outcome, termination, cfg, move_count, winner_override=resigned_winner)
+    _assign_values(
+        samples,
+        outcome,
+        termination,
+        cfg,
+        move_count,
+        winner_override=resigned_winner,
+        truncation_bootstrap=last_root_value,
+    )
     return GameResult(samples=samples, termination=termination)
 
 
@@ -182,7 +192,17 @@ def _termination_reason(outcome: chess.Outcome | None, *,
 
 def _assign_values(samples: list[Sample], outcome: chess.Outcome | None,
                    termination: str, cfg: Config, move_count: int,
-                   winner_override: chess.Color | None = None) -> None:
+                   winner_override: chess.Color | None = None,
+                   truncation_bootstrap: float = 0.0) -> None:
+    if termination == "max_moves" and samples:
+        # Max-move truncation is a cutoff, not a terminal chess result. Bootstrap
+        # from the final root value so long games don't collapse to all-zero labels.
+        final_player = samples[-1].player
+        target = float(truncation_bootstrap)
+        for s in samples:
+            s.value = target if s.player == final_player else -target
+        return
+
     winner = winner_override if winner_override is not None else (outcome.winner if outcome is not None else None)
     if termination in {"checkmate", "resign"} and winner is not None:
         target = 1.0
