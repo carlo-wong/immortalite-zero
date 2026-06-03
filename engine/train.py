@@ -195,7 +195,8 @@ def _latest_snapshot_before(ckpt_dir: str, iteration: int) -> str | None:
 
 def _play_match_game(cfg: Config, simulations: int,
                      white_eval: NetEvaluator, black_eval: NetEvaluator) -> GameResult:
-    gen = play_game_gen(cfg, simulations, add_noise=False, exploration_moves=0)
+    # Use a few exploration moves so the networks don't play the exact same 2 games 20 times!
+    gen = play_game_gen(cfg, simulations, add_noise=False, exploration_moves=4)
     req = next(gen)
     while True:
         evaluator = white_eval if req.turn else black_eval
@@ -213,6 +214,9 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
 
     match_cfg = deepcopy(cfg)
     match_cfg.beauty.enabled = False
+    # Disable resignation during strength evaluation matches
+    match_cfg.train.resign_threshold = -1.1
+    match_cfg.train.resign_plies = 0
 
     eval_a = NetEvaluator(net_a, device=device)
     eval_b = NetEvaluator(net_b, device=device)
