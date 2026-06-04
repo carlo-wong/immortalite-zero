@@ -163,6 +163,17 @@ def _log_step_metrics(ckpt_dir: str, it: int, step: int, metrics: dict[str, floa
         )
 
 
+def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, winrate: float,
+                     wins: int, losses: int, draws: int, games: int) -> None:
+    os.makedirs(ckpt_dir or ".", exist_ok=True)
+    path = os.path.join(ckpt_dir, "metrics_gates.csv")
+    new = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8") as f:
+        if new:
+            f.write("iter,prev_iter,winrate,wins,losses,draws,games\n")
+        f.write(f"{it},{prev_it},{winrate:.6f},{wins},{losses},{draws},{games}\n")
+
+
 def _winner_of(game: GameResult) -> int:
     """Return +1 for white win, -1 for black win, 0 for non-decisive result."""
     if game.termination not in {"checkmate", "resign"} or not game.samples:
@@ -208,9 +219,9 @@ def _play_match_game(cfg: Config, simulations: int,
 
 
 def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
-               n_games: int, sims: int, device: str) -> float:
+               n_games: int, sims: int, device: str) -> tuple[float, int, int, int]:
     if n_games <= 0:
-        return float("nan")
+        return float("nan"), 0, 0, 0
 
     match_cfg = deepcopy(cfg)
     match_cfg.beauty.enabled = False
@@ -221,6 +232,9 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     eval_a = NetEvaluator(net_a, device=device)
     eval_b = NetEvaluator(net_b, device=device)
     score = 0.0
+    wins = 0
+    losses = 0
+    draws = 0
     gate_bar = tqdm(range(n_games), desc=f"gate ({n_games} games)", unit="game", leave=False)
     for game_idx in gate_bar:
         a_is_white = (game_idx % 2 == 0)
@@ -230,11 +244,15 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
         winner = _winner_of(game)
         if winner == 0:
             score += 0.5
+            draws += 1
         elif (winner == 1 and a_is_white) or (winner == -1 and not a_is_white):
             score += 1.0
+            wins += 1
+        else:
+            losses += 1
         gate_bar.set_postfix(score=f"{score / (game_idx + 1):.3f}")
     gate_bar.close()
-    return score / n_games
+    return score / n_games, wins, losses, draws
 
 
 def _sample_shard_path(ckpt_dir: str, iteration: int) -> str:
@@ -589,12 +607,29 @@ def main() -> None:
                             else prev_state
                         )
                         _load_matching_state_dict(prev_net, prev_model, label="gate load", verbose=False)
-                        winrate_vs_prev = play_match(
+                        winrate_vs_prev, wins, losses, draws = play_match(
                             net, prev_net, cfg, n_games=args.gate_games, sims=sims, device=args.device
                         )
+                        prev_it = -1
+                        base_name = os.path.basename(previous_snapshot)
+                        if base_name.startswith("ckpt_iter_") and base_name.endswith(".pt"):
+                            try:
+                                prev_it = int(base_name[len("ckpt_iter_"):-len(".pt")])
+                            except ValueError:
+                                pass
                         print(
                             f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
-                            f"-> {winrate_vs_prev:.3f}"
+                            f"-> {winrate_vs_prev:.3f} (Wins: {wins}, Losses: {losses}, Draws: {draws})"
+                        )
+                        _log_gate_metrics(
+                            cfg.train.checkpoint_dir,
+                            it,
+                            prev_it,
+                            winrate_vs_prev,
+                            wins,
+                            losses,
+                            draws,
+                            args.gate_games,
                         )
                 else:
                     print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")

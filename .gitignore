@@ -6,3 +6,5 @@ checkpoints/
 .DS_Store
 research/
 .cursor/
+*.zip
+results/
