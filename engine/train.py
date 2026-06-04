@@ -247,6 +247,8 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     # Disable resignation during strength evaluation matches
     match_cfg.train.resign_threshold = -1.1
     match_cfg.train.resign_plies = 0
+    # Disable draw contempt/penalty during strength evaluation matches
+    match_cfg.mcts.draw_contempt = 0.0
 
     eval_a = NetEvaluator(net_a, device=device)
     eval_b = NetEvaluator(net_b, device=device)
