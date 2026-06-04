@@ -163,15 +163,24 @@ def _log_step_metrics(ckpt_dir: str, it: int, step: int, metrics: dict[str, floa
         )
 
 
-def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, winrate: float,
-                     wins: int, losses: int, draws: int, games: int) -> None:
+def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games: int) -> None:
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = os.path.join(ckpt_dir, "metrics_gates.csv")
     new = not os.path.exists(path)
     with open(path, "a", encoding="utf-8") as f:
         if new:
-            f.write("iter,prev_iter,winrate,wins,losses,draws,games\n")
-        f.write(f"{it},{prev_it},{winrate:.6f},{wins},{losses},{draws},{games}\n")
+            f.write(
+                "iter,prev_iter,winrate,wins_as_white,wins_as_black,"
+                "losses_as_white,losses_as_black,draws_as_white,draws_as_black,"
+                "mean_game_len,games,terminations\n"
+            )
+        f.write(
+            f"{it},{prev_it},{metrics['winrate']:.6f},"
+            f"{metrics['wins_as_white']},{metrics['wins_as_black']},"
+            f"{metrics['losses_as_white']},{metrics['losses_as_black']},"
+            f"{metrics['draws_as_white']},{metrics['draws_as_black']},"
+            f"{metrics['mean_game_len']:.2f},{games},{metrics['terminations']}\n"
+        )
 
 
 def _winner_of(game: GameResult) -> int:
@@ -219,9 +228,19 @@ def _play_match_game(cfg: Config, simulations: int,
 
 
 def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
-               n_games: int, sims: int, device: str) -> tuple[float, int, int, int]:
+               n_games: int, sims: int, device: str) -> dict:
     if n_games <= 0:
-        return float("nan"), 0, 0, 0
+        return {
+            "winrate": float("nan"),
+            "wins_as_white": 0,
+            "wins_as_black": 0,
+            "losses_as_white": 0,
+            "losses_as_black": 0,
+            "draws_as_white": 0,
+            "draws_as_black": 0,
+            "mean_game_len": 0.0,
+            "terminations": ""
+        }
 
     match_cfg = deepcopy(cfg)
     match_cfg.beauty.enabled = False
@@ -232,9 +251,16 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     eval_a = NetEvaluator(net_a, device=device)
     eval_b = NetEvaluator(net_b, device=device)
     score = 0.0
-    wins = 0
-    losses = 0
-    draws = 0
+    wins_w = 0
+    wins_b = 0
+    losses_w = 0
+    losses_b = 0
+    draws_w = 0
+    draws_b = 0
+    game_lengths = []
+    from collections import Counter
+    termination_counts: Counter[str] = Counter()
+
     gate_bar = tqdm(range(n_games), desc=f"gate ({n_games} games)", unit="game", leave=False)
     for game_idx in gate_bar:
         a_is_white = (game_idx % 2 == 0)
@@ -242,17 +268,46 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
         black_eval = eval_b if a_is_white else eval_a
         game = _play_match_game(match_cfg, sims, white_eval, black_eval)
         winner = _winner_of(game)
+        
+        game_lengths.append(len(game.samples))
+        termination_counts[game.termination] += 1
+
         if winner == 0:
             score += 0.5
-            draws += 1
+            if a_is_white:
+                draws_w += 1
+            else:
+                draws_b += 1
         elif (winner == 1 and a_is_white) or (winner == -1 and not a_is_white):
             score += 1.0
-            wins += 1
+            if a_is_white:
+                wins_w += 1
+            else:
+                wins_b += 1
         else:
-            losses += 1
+            if a_is_white:
+                losses_w += 1
+            else:
+                losses_b += 1
         gate_bar.set_postfix(score=f"{score / (game_idx + 1):.3f}")
     gate_bar.close()
-    return score / n_games, wins, losses, draws
+
+    total_wins = wins_w + wins_b
+    total_losses = losses_w + losses_b
+    total_draws = draws_w + draws_b
+    terminations_str = ";".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
+
+    return {
+        "winrate": score / n_games,
+        "wins_as_white": wins_w,
+        "wins_as_black": wins_b,
+        "losses_as_white": losses_w,
+        "losses_as_black": losses_b,
+        "draws_as_white": draws_w,
+        "draws_as_black": draws_b,
+        "mean_game_len": float(np.mean(game_lengths)) if game_lengths else 0.0,
+        "terminations": terminations_str
+    }
 
 
 def _sample_shard_path(ckpt_dir: str, iteration: int) -> str:
@@ -607,9 +662,10 @@ def main() -> None:
                             else prev_state
                         )
                         _load_matching_state_dict(prev_net, prev_model, label="gate load", verbose=False)
-                        winrate_vs_prev, wins, losses, draws = play_match(
+                        gate_metrics = play_match(
                             net, prev_net, cfg, n_games=args.gate_games, sims=sims, device=args.device
                         )
+                        winrate_vs_prev = gate_metrics["winrate"]
                         prev_it = -1
                         base_name = os.path.basename(previous_snapshot)
                         if base_name.startswith("ckpt_iter_") and base_name.endswith(".pt"):
@@ -617,18 +673,18 @@ def main() -> None:
                                 prev_it = int(base_name[len("ckpt_iter_"):-len(".pt")])
                             except ValueError:
                                 pass
+                        total_wins = gate_metrics["wins_as_white"] + gate_metrics["wins_as_black"]
+                        total_losses = gate_metrics["losses_as_white"] + gate_metrics["losses_as_black"]
+                        total_draws = gate_metrics["draws_as_white"] + gate_metrics["draws_as_black"]
                         print(
                             f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
-                            f"-> {winrate_vs_prev:.3f} (Wins: {wins}, Losses: {losses}, Draws: {draws})"
+                            f"-> {winrate_vs_prev:.3f} (Wins: {total_wins}, Losses: {total_losses}, Draws: {total_draws})"
                         )
                         _log_gate_metrics(
                             cfg.train.checkpoint_dir,
                             it,
                             prev_it,
-                            winrate_vs_prev,
-                            wins,
-                            losses,
-                            draws,
+                            gate_metrics,
                             args.gate_games,
                         )
                 else:
