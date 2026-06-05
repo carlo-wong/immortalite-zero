@@ -655,67 +655,17 @@ def main() -> None:
         value_mean = float(value_targets.mean()) if value_targets.size else float("nan")
         value_std = float(value_targets.std()) if value_targets.size else float("nan")
 
-        winrate_vs_prev = float("nan")
-        if args.gate_every > 0 and it > 0 and it % args.gate_every == 0:
-            previous_snapshot = _latest_snapshot_before(cfg.train.checkpoint_dir, it)
-            if previous_snapshot is None:
-                print(f"gate iter {it}: skipped (no prior numbered snapshot found)")
-            else:
-                prev_state = torch.load(previous_snapshot, map_location=args.device)
-                if isinstance(prev_state, dict) and "model" in prev_state:
-                    prev_encoding_version = int(prev_state.get("encoding_version", 1))
-                    if prev_encoding_version != ENCODING_VERSION:
-                        print(
-                            f"gate iter {it}: skipped ({os.path.basename(previous_snapshot)} "
-                            f"encoding {prev_encoding_version} != {ENCODING_VERSION})"
-                        )
-                    else:
-                        prev_net_cfg = cfg.net
-                        if "net" in prev_state:
-                            prev_net_cfg = NetConfig(**prev_state["net"])
-                        prev_net = ChessNet(prev_net_cfg).to(args.device)
-                        prev_model = (
-                            prev_state["model"]
-                            if isinstance(prev_state, dict) and "model" in prev_state
-                            else prev_state
-                        )
-                        _load_matching_state_dict(prev_net, prev_model, label="gate load", verbose=False)
-                        gate_metrics = play_match(
-                            net, prev_net, cfg, n_games=args.gate_games, sims=sims, device=args.device
-                        )
-                        winrate_vs_prev = gate_metrics["winrate"]
-                        prev_it = -1
-                        base_name = os.path.basename(previous_snapshot)
-                        if base_name.startswith("ckpt_iter_") and base_name.endswith(".pt"):
-                            try:
-                                prev_it = int(base_name[len("ckpt_iter_"):-len(".pt")])
-                            except ValueError:
-                                pass
-                        total_wins = gate_metrics["wins_as_white"] + gate_metrics["wins_as_black"]
-                        total_losses = gate_metrics["losses_as_white"] + gate_metrics["losses_as_black"]
-                        total_draws = gate_metrics["draws_as_white"] + gate_metrics["draws_as_black"]
-                        print(
-                            f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
-                            f"-> {winrate_vs_prev:.3f} (Wins: {total_wins}, Losses: {total_losses}, Draws: {total_draws})"
-                        )
-                        _log_gate_metrics(
-                            cfg.train.checkpoint_dir,
-                            it,
-                            prev_it,
-                            gate_metrics,
-                            args.gate_games,
-                        )
-                else:
-                    print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")
-
         term_summary = ", ".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
         print(f"iter {it:3d} | sims {sims:3d} | games {cfg.train.games_per_iteration} "
               f"| samples {new_samples:4d} | buffer {len(buffer):6d} "
               f"| policy_loss {pl:.3f} | value_loss {vl:.3f} "
               f"| ent {policy_entropy:.3f} | sign_acc {value_sign_acc:.3f} "
-              f"| decisive {decisive_rate:.3f} | gate {winrate_vs_prev:.3f} "
+              f"| decisive {decisive_rate:.3f} "
               f"| ends {term_summary} "
               f"| {dt:.1f}s", flush=True)
+        # Persist per-iteration training metrics BEFORE the gate so a gate failure
+        # (e.g. a Colab quota kill mid-match) cannot lose this iteration's metrics.
+        # Gate results are recorded separately in metrics_gates.csv.
         _log_metrics(
             cfg.train.checkpoint_dir,
             it,
@@ -735,7 +685,7 @@ def main() -> None:
             max_moves_trunc_rate=max_moves_trunc_rate,
             value_mean=value_mean,
             value_std=value_std,
-            winrate_vs_prev=winrate_vs_prev,
+            winrate_vs_prev=float("nan"),
             learning_rate=cfg.train.learning_rate,
             games=cfg.train.games_per_iteration,
             train_steps=cfg.train.train_steps_per_iteration,
@@ -743,6 +693,63 @@ def main() -> None:
             buffer_size=len(buffer),
             termination_counts=dict(termination_counts),
         )
+
+        # Strength gate runs last and is isolated in try/except: a failure here
+        # (quota kill, OOM) leaves this iteration's checkpoint and metrics intact
+        # and does not abort the rest of the run.
+        if args.gate_every > 0 and it > 0 and it % args.gate_every == 0:
+            try:
+                previous_snapshot = _latest_snapshot_before(cfg.train.checkpoint_dir, it)
+                if previous_snapshot is None:
+                    print(f"gate iter {it}: skipped (no prior numbered snapshot found)")
+                else:
+                    prev_state = torch.load(previous_snapshot, map_location=args.device)
+                    if isinstance(prev_state, dict) and "model" in prev_state:
+                        prev_encoding_version = int(prev_state.get("encoding_version", 1))
+                        if prev_encoding_version != ENCODING_VERSION:
+                            print(
+                                f"gate iter {it}: skipped ({os.path.basename(previous_snapshot)} "
+                                f"encoding {prev_encoding_version} != {ENCODING_VERSION})"
+                            )
+                        else:
+                            prev_net_cfg = cfg.net
+                            if "net" in prev_state:
+                                prev_net_cfg = NetConfig(**prev_state["net"])
+                            prev_net = ChessNet(prev_net_cfg).to(args.device)
+                            prev_model = (
+                                prev_state["model"]
+                                if isinstance(prev_state, dict) and "model" in prev_state
+                                else prev_state
+                            )
+                            _load_matching_state_dict(prev_net, prev_model, label="gate load", verbose=False)
+                            gate_metrics = play_match(
+                                net, prev_net, cfg, n_games=args.gate_games, sims=sims, device=args.device
+                            )
+                            prev_it = -1
+                            base_name = os.path.basename(previous_snapshot)
+                            if base_name.startswith("ckpt_iter_") and base_name.endswith(".pt"):
+                                try:
+                                    prev_it = int(base_name[len("ckpt_iter_"):-len(".pt")])
+                                except ValueError:
+                                    pass
+                            total_wins = gate_metrics["wins_as_white"] + gate_metrics["wins_as_black"]
+                            total_losses = gate_metrics["losses_as_white"] + gate_metrics["losses_as_black"]
+                            total_draws = gate_metrics["draws_as_white"] + gate_metrics["draws_as_black"]
+                            print(
+                                f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
+                                f"-> {gate_metrics['winrate']:.3f} (Wins: {total_wins}, Losses: {total_losses}, Draws: {total_draws})"
+                            )
+                            _log_gate_metrics(
+                                cfg.train.checkpoint_dir,
+                                it,
+                                prev_it,
+                                gate_metrics,
+                                args.gate_games,
+                            )
+                    else:
+                        print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")
+            except Exception as exc:
+                print(f"gate iter {it}: failed ({exc}); continuing", flush=True)
 
 
 if __name__ == "__main__":
