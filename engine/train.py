@@ -123,6 +123,8 @@ def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
                  white_win_rate: float, draw_rate: float,
                  max_moves_trunc_rate: float, value_mean: float,
                  value_std: float, winrate_vs_prev: float,
+                 learning_rate: float, games: int, train_steps: int,
+                 batch_size: int, buffer_size: int,
                  termination_counts: dict[str, int]) -> None:
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = os.path.join(ckpt_dir, "metrics.csv")
@@ -134,13 +136,15 @@ def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
                 "iter,sims,samples,seconds,policy_loss,value_loss,"
                 "policy_entropy,value_sign_acc,policy_top1_agree,grad_norm,"
                 "mean_game_len,decisive_rate,white_win_rate,draw_rate,"
-                "max_moves_trunc_rate,value_mean,value_std,winrate_vs_prev,terminations\n"
+                "max_moves_trunc_rate,value_mean,value_std,winrate_vs_prev,"
+                "learning_rate,games,train_steps,batch_size,buffer_size,terminations\n"
             )
         f.write(
             f"{it},{sims},{samples},{dt:.1f},{policy_loss:.6f},{value_loss:.6f},"
             f"{policy_entropy:.6f},{value_sign_acc:.6f},{policy_top1_agree:.6f},{grad_norm:.6f},"
             f"{mean_game_len:.6f},{decisive_rate:.6f},{white_win_rate:.6f},{draw_rate:.6f},"
             f"{max_moves_trunc_rate:.6f},{value_mean:.6f},{value_std:.6f},{winrate_vs_prev:.6f},"
+            f"{learning_rate:.6e},{games},{train_steps},{batch_size},{buffer_size},"
             f"{terminations}\n"
         )
 
@@ -446,10 +450,16 @@ def main() -> None:
                         help="concurrent self-play games to batch on GPU")
     parser.add_argument("--replay-window", type=int, default=None,
                         help="max persisted replay samples kept on disk")
+    parser.add_argument("--batch-size", type=int, default=None,
+                        help="override training minibatch size")
+    parser.add_argument("--replay-buffer", type=int, default=None,
+                        help="override in-memory replay buffer size")
     parser.add_argument("--gate-every", type=int, default=0,
                         help="run strength gate every N iterations (0 = off)")
     parser.add_argument("--gate-games", type=int, default=20,
                         help="games per strength gate (current net vs previous snapshot)")
+    parser.add_argument("--lr", type=float, default=None,
+                        help="override learning rate")
     args = parser.parse_args()
 
     # Fall back to CPU if CUDA was requested but isn't available in this runtime.
@@ -494,6 +504,12 @@ def main() -> None:
         cfg.train.selfplay_concurrency = args.concurrency
     if args.replay_window is not None:
         cfg.train.replay_window = args.replay_window
+    if args.batch_size is not None:
+        cfg.train.batch_size = args.batch_size
+    if args.replay_buffer is not None:
+        cfg.train.replay_buffer_size = args.replay_buffer
+    if args.lr is not None:
+        cfg.train.learning_rate = args.lr
     if args.max_game_moves is not None:
         cfg.train.max_game_moves = args.max_game_moves
     if args.draw_penalty is not None:
@@ -720,6 +736,11 @@ def main() -> None:
             value_mean=value_mean,
             value_std=value_std,
             winrate_vs_prev=winrate_vs_prev,
+            learning_rate=cfg.train.learning_rate,
+            games=cfg.train.games_per_iteration,
+            train_steps=cfg.train.train_steps_per_iteration,
+            batch_size=cfg.train.batch_size,
+            buffer_size=len(buffer),
             termination_counts=dict(termination_counts),
         )
 
