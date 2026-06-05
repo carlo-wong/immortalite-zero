@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Generator
+from typing import Any, Callable, Generator
 
 import chess
+import chess.syzygy
 import numpy as np
 
 from .config import Config
@@ -47,8 +48,26 @@ class _ActiveGame:
     pending_board: chess.Board
 
 
+def _tablebase_adjudication(board: chess.Board, tablebase: Any | None, max_pieces: int
+                            ) -> tuple[str | None, chess.Color | None]:
+    if tablebase is None or chess.popcount(board.occupied) > max_pieces:
+        return None, None
+    try:
+        wdl = int(tablebase.probe_wdl(board))
+    except (KeyError, chess.syzygy.MissingTableError):
+        return None, None
+    if wdl == 2:
+        return "tablebase_win", board.turn
+    if wdl == -2:
+        return "tablebase_win", not board.turn
+    if wdl in {-1, 0, 1}:
+        return "tablebase_draw", None
+    return None, None
+
+
 def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
-                  exploration_moves: int = _EXPLORATION_MOVES
+                  exploration_moves: int = _EXPLORATION_MOVES,
+                  tablebase: Any | None = None,
                   ) -> Generator[chess.Board, tuple[np.ndarray, float], GameResult]:
     board = chess.Board()
     mcts = MCTS(None, cfg.mcts)
@@ -56,10 +75,20 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
     move_count = 0
     no_legal_moves = False
     resigned_winner: chess.Color | None = None
+    tablebase_winner: chess.Color | None = None
+    tablebase_draw = False
     low_value_streak = 0
     last_root_value = 0.0
 
     while not board.is_game_over(claim_draw=True) and move_count < cfg.train.max_game_moves:
+        tb_termination, tb_winner = _tablebase_adjudication(board, tablebase, cfg.train.tb_max_pieces)
+        if tb_termination == "tablebase_win":
+            tablebase_winner = tb_winner
+            break
+        if tb_termination == "tablebase_draw":
+            tablebase_draw = True
+            break
+
         search = mcts.search_gen(board, simulations=simulations, add_noise=add_noise)
         req = next(search)
         while True:
@@ -104,23 +133,27 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
 
     outcome = board.outcome(claim_draw=True)
     resigned = resigned_winner is not None
+    tablebase_win = tablebase_winner is not None
     hit_max_moves = move_count >= cfg.train.max_game_moves and outcome is None and not resigned
     termination = _termination_reason(outcome, hit_max_moves=hit_max_moves,
-                                      no_legal_moves=no_legal_moves, resigned=resigned)
+                                      no_legal_moves=no_legal_moves, resigned=resigned,
+                                      tablebase_win=tablebase_win, tablebase_draw=tablebase_draw)
+    winner_override = tablebase_winner if tablebase_winner is not None else resigned_winner
     _assign_values(
         samples,
         outcome,
         termination,
         cfg,
         move_count,
-        winner_override=resigned_winner,
+        winner_override=winner_override,
         truncation_bootstrap=last_root_value,
     )
     return GameResult(samples=samples, termination=termination)
 
 
-def play_game(evaluator: NetEvaluator, cfg: Config, simulations: int) -> GameResult:
-    gen = play_game_gen(cfg, simulations)
+def play_game(evaluator: NetEvaluator, cfg: Config, simulations: int,
+              tablebase: Any | None = None) -> GameResult:
+    gen = play_game_gen(cfg, simulations, tablebase=tablebase)
     req = next(gen)
     while True:
         logits, value = evaluator.evaluate(req)
@@ -133,7 +166,8 @@ def play_game(evaluator: NetEvaluator, cfg: Config, simulations: int) -> GameRes
 def play_games_batched(evaluator: NetEvaluator, cfg: Config, simulations: int,
                        num_games: int, concurrency: int,
                        on_game_finished: Callable[[GameResult], None] | None = None,
-                       on_step: Callable[[int], None] | None = None
+                       on_step: Callable[[int], None] | None = None,
+                       tablebase: Any | None = None,
                        ) -> list[GameResult]:
     if num_games <= 0:
         return []
@@ -146,7 +180,7 @@ def play_games_batched(evaluator: NetEvaluator, cfg: Config, simulations: int,
 
     while len(completed) < num_games:
         while launched < num_games and len(active) < concurrency:
-            gen = play_game_gen(cfg, simulations)
+            gen = play_game_gen(cfg, simulations, tablebase=tablebase)
             active.append(_ActiveGame(gen=gen, pending_board=next(gen)))
             launched += 1
 
@@ -172,7 +206,12 @@ def play_games_batched(evaluator: NetEvaluator, cfg: Config, simulations: int,
 
 
 def _termination_reason(outcome: chess.Outcome | None, *,
-                        hit_max_moves: bool, no_legal_moves: bool, resigned: bool = False) -> str:
+                        hit_max_moves: bool, no_legal_moves: bool, resigned: bool = False,
+                        tablebase_win: bool = False, tablebase_draw: bool = False) -> str:
+    if tablebase_win:
+        return "tablebase_win"
+    if tablebase_draw:
+        return "tablebase_draw"
     if resigned:
         return "resign"
     if outcome is not None:
@@ -204,11 +243,11 @@ def _assign_values(samples: list[Sample], outcome: chess.Outcome | None,
         return
 
     winner = winner_override if winner_override is not None else (outcome.winner if outcome is not None else None)
-    if termination in {"checkmate", "resign"} and winner is not None:
+    if termination in {"checkmate", "resign", "tablebase_win"} and winner is not None:
         target = 1.0
         if termination == "checkmate" and cfg.train.fast_mate_bonus > 0.0:
             target += cfg.train.fast_mate_bonus / max(1, move_count)
-    elif termination in _DRAW_TERMINATION_SET:
+    elif termination in _DRAW_TERMINATION_SET or termination == "tablebase_draw":
         # Contempt: a small negative target discourages dull draws,
         # nudging the net toward decisive, imbalanced positions.
         target = -cfg.train.draw_penalty
@@ -217,7 +256,7 @@ def _assign_values(samples: list[Sample], outcome: chess.Outcome | None,
         target = 0.0
 
     for s in samples:
-        if termination in {"checkmate", "resign"} and winner is not None:
+        if termination in {"checkmate", "resign", "tablebase_win"} and winner is not None:
             s.value = target if s.player == winner else -target
         else:
             s.value = target

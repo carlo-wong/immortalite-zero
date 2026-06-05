@@ -8,6 +8,7 @@ survive disconnects (point --checkpoint-dir at a Google Drive folder).
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import random
 import time
@@ -16,6 +17,7 @@ from copy import deepcopy
 from collections import Counter, deque
 from dataclasses import asdict
 
+import chess.syzygy
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -36,6 +38,33 @@ def _sims_for_iteration(cfg: Config, it: int) -> int:
         return t.sims_end
     frac = it / max(1, t.sims_ramp_iterations)
     return int(round(t.sims_start + frac * (t.sims_end - t.sims_start)))
+
+
+def _lr_for_iteration(cfg: Config, it: int) -> float:
+    peak_lr = float(cfg.train.learning_rate)
+    min_lr = float(cfg.train.lr_min)
+    if peak_lr <= 0.0:
+        return peak_lr
+    if min_lr < 0.0:
+        min_lr = 0.0
+    if min_lr > peak_lr:
+        min_lr = peak_lr
+
+    warmup_iters = max(0, int(cfg.train.lr_warmup_iters))
+    total_iters = max(1, int(cfg.train.lr_total_iters))
+
+    if warmup_iters > 0 and it < warmup_iters:
+        warmup_frac = (it + 1) / warmup_iters
+        return min_lr + (peak_lr - min_lr) * warmup_frac
+
+    if total_iters <= warmup_iters:
+        return min_lr
+
+    decay_span = total_iters - warmup_iters
+    decay_step = min(max(it - warmup_iters, 0), decay_span)
+    decay_frac = decay_step / decay_span
+    cosine = 0.5 * (1.0 + math.cos(math.pi * decay_frac))
+    return min_lr + (peak_lr - min_lr) * cosine
 
 
 def _gaussian_value_targets(target_v: torch.Tensor, support: torch.Tensor,
@@ -189,7 +218,7 @@ def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games
 
 def _winner_of(game: GameResult) -> int:
     """Return +1 for white win, -1 for black win, 0 for non-decisive result."""
-    if game.termination not in {"checkmate", "resign"} or not game.samples:
+    if game.termination not in {"checkmate", "resign", "tablebase_win"} or not game.samples:
         return 0
     first = game.samples[0]
     if first.value == 0.0:
@@ -460,6 +489,10 @@ def main() -> None:
                         help="games per strength gate (current net vs previous snapshot)")
     parser.add_argument("--lr", type=float, default=None,
                         help="override learning rate")
+    parser.add_argument("--lr-min", type=float, default=None,
+                        help="minimum learning rate for cosine schedule")
+    parser.add_argument("--syzygy-path", type=str, default=None,
+                        help="path to Syzygy WDL tablebase directory for self-play adjudication")
     args = parser.parse_args()
 
     # Fall back to CPU if CUDA was requested but isn't available in this runtime.
@@ -510,6 +543,10 @@ def main() -> None:
         cfg.train.replay_buffer_size = args.replay_buffer
     if args.lr is not None:
         cfg.train.learning_rate = args.lr
+    if args.lr_min is not None:
+        cfg.train.lr_min = args.lr_min
+    if args.syzygy_path:
+        cfg.train.syzygy_path = args.syzygy_path
     if args.max_game_moves is not None:
         cfg.train.max_game_moves = args.max_game_moves
     if args.draw_penalty is not None:
@@ -528,6 +565,12 @@ def main() -> None:
         f"steps={cfg.train.train_steps_per_iteration} "
         f"concurrency={cfg.train.selfplay_concurrency} "
         f"max_moves={cfg.train.max_game_moves} "
+        f"lr={cfg.train.learning_rate:.6f} "
+        f"lr_min={cfg.train.lr_min:.6f} "
+        f"lr_warmup_iters={cfg.train.lr_warmup_iters} "
+        f"lr_total_iters={cfg.train.lr_total_iters} "
+        f"tb_max_pieces={cfg.train.tb_max_pieces} "
+        f"syzygy_path={cfg.train.syzygy_path or 'off'} "
         f"draw_penalty={cfg.train.draw_penalty:.3f} "
         f"resign_threshold={cfg.train.resign_threshold:.3f} "
         f"resign_plies={cfg.train.resign_plies} "
@@ -567,189 +610,209 @@ def main() -> None:
     if loaded:
         print(f"warmed replay buffer with {loaded} samples from shard files")
 
-    for local_it in range(args.iterations):
-        it = start_iter + local_it
-        sims = _sims_for_iteration(cfg, it)
-        evaluator = NetEvaluator(net, device=args.device)
+    tablebase = None
+    if cfg.train.syzygy_path:
+        if not os.path.isdir(cfg.train.syzygy_path):
+            raise ValueError(f"Syzygy path does not exist or is not a directory: {cfg.train.syzygy_path}")
+        tablebase = chess.syzygy.open_tablebase(cfg.train.syzygy_path)
+        print(f"syzygy: enabled ({cfg.train.syzygy_path})")
 
-        t0 = time.time()
-        new_samples = 0
-        iteration_samples: list[Sample] = []
-        termination_counts: Counter[str] = Counter()
-        game_lengths: list[int] = []
-        game_outcomes: list[int] = []
-        n_games = cfg.train.games_per_iteration
-        game_bar = tqdm(total=n_games, desc=f"iter {it} self-play", unit="game", leave=False)
+    try:
+        for local_it in range(args.iterations):
+            it = start_iter + local_it
+            current_lr = _lr_for_iteration(cfg, it)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = current_lr
+            sims = _sims_for_iteration(cfg, it)
+            evaluator = NetEvaluator(net, device=args.device)
 
-        def _on_game(game: GameResult) -> None:
-            nonlocal new_samples
-            buffer.extend(game.samples)
-            iteration_samples.extend(game.samples)
-            new_samples += len(game.samples)
-            termination_counts[game.termination] += 1
-            game_lengths.append(len(game.samples))
-            game_outcomes.append(_winner_of(game))
-            game_bar.set_postfix(moves=len(game.samples), buffer=len(buffer))
-            game_bar.update(1)
+            t0 = time.time()
+            new_samples = 0
+            iteration_samples: list[Sample] = []
+            termination_counts: Counter[str] = Counter()
+            game_lengths: list[int] = []
+            game_outcomes: list[int] = []
+            n_games = cfg.train.games_per_iteration
+            game_bar = tqdm(total=n_games, desc=f"iter {it} self-play", unit="game", leave=False)
 
-        play_games_batched(
-            evaluator,
-            cfg,
-            simulations=sims,
-            num_games=n_games,
-            concurrency=cfg.train.selfplay_concurrency,
-            on_game_finished=_on_game,
-        )
-        game_bar.close()
+            def _on_game(game: GameResult) -> None:
+                nonlocal new_samples
+                buffer.extend(game.samples)
+                iteration_samples.extend(game.samples)
+                new_samples += len(game.samples)
+                termination_counts[game.termination] += 1
+                game_lengths.append(len(game.samples))
+                game_outcomes.append(_winner_of(game))
+                game_bar.set_postfix(moves=len(game.samples), buffer=len(buffer))
+                game_bar.update(1)
 
-        _save_sample_shard(cfg.train.checkpoint_dir, it, iteration_samples)
+            play_games_batched(
+                evaluator,
+                cfg,
+                simulations=sims,
+                num_games=n_games,
+                concurrency=cfg.train.selfplay_concurrency,
+                on_game_finished=_on_game,
+                tablebase=tablebase,
+            )
+            game_bar.close()
 
-        net.train()
-        step_metrics: dict[str, list[float]] = {}
-        if len(buffer) >= cfg.train.batch_size:
-            train_bar = tqdm(range(cfg.train.train_steps_per_iteration),
-                             desc=f"iter {it} train", unit="step", leave=False)
-            for step in train_bar:
-                batch = random.sample(buffer, cfg.train.batch_size)
-                step_result = train_step(net, optimizer, batch, args.device)
-                for name, value in step_result.items():
-                    step_metrics.setdefault(name, []).append(value)
-                _log_step_metrics(cfg.train.checkpoint_dir, it, int(step), step_result)
-                train_bar.set_postfix(
-                    p=f"{step_result['policy_loss']:.3f}",
-                    v=f"{step_result['value_loss']:.3f}",
-                    g=f"{step_result['grad_norm']:.2f}",
-                )
-        net.eval()
+            _save_sample_shard(cfg.train.checkpoint_dir, it, iteration_samples)
 
-        save_checkpoint(net, cfg, os.path.join(cfg.train.checkpoint_dir, "latest.pt"), it)
-        if args.save_every and it % args.save_every == 0:
-            snap = os.path.join(cfg.train.checkpoint_dir, f"ckpt_iter_{it:04d}.pt")
-            save_checkpoint(net, cfg, snap, it)
+            net.train()
+            step_metrics: dict[str, list[float]] = {}
+            if len(buffer) >= cfg.train.batch_size:
+                train_bar = tqdm(range(cfg.train.train_steps_per_iteration),
+                                 desc=f"iter {it} train", unit="step", leave=False)
+                for step in train_bar:
+                    batch = random.sample(buffer, cfg.train.batch_size)
+                    step_result = train_step(net, optimizer, batch, args.device)
+                    for name, value in step_result.items():
+                        step_metrics.setdefault(name, []).append(value)
+                    _log_step_metrics(cfg.train.checkpoint_dir, it, int(step), step_result)
+                    train_bar.set_postfix(
+                        p=f"{step_result['policy_loss']:.3f}",
+                        v=f"{step_result['value_loss']:.3f}",
+                        g=f"{step_result['grad_norm']:.2f}",
+                    )
+            net.eval()
 
-        def _mean_metric(name: str) -> float:
-            values = step_metrics.get(name)
-            return float(np.mean(values)) if values else float("nan")
+            save_checkpoint(net, cfg, os.path.join(cfg.train.checkpoint_dir, "latest.pt"), it)
+            if args.save_every and it % args.save_every == 0:
+                snap = os.path.join(cfg.train.checkpoint_dir, f"ckpt_iter_{it:04d}.pt")
+                save_checkpoint(net, cfg, snap, it)
 
-        dt = time.time() - t0
-        pl = _mean_metric("policy_loss")
-        vl = _mean_metric("value_loss")
-        policy_entropy = _mean_metric("policy_entropy")
-        value_sign_acc = _mean_metric("value_sign_acc")
-        policy_top1_agree = _mean_metric("policy_top1_agree")
-        grad_norm = _mean_metric("grad_norm")
+            def _mean_metric(name: str) -> float:
+                values = step_metrics.get(name)
+                return float(np.mean(values)) if values else float("nan")
 
-        total_games = len(game_lengths)
-        white_wins = sum(1 for o in game_outcomes if o == 1)
-        black_wins = sum(1 for o in game_outcomes if o == -1)
-        draws_or_other = total_games - white_wins - black_wins
-        mean_game_len = float(np.mean(game_lengths)) if game_lengths else float("nan")
-        decisive_games = termination_counts.get("checkmate", 0) + termination_counts.get("resign", 0)
-        decisive_rate = decisive_games / total_games if total_games else float("nan")
-        white_win_rate = white_wins / total_games if total_games else float("nan")
-        draw_rate = draws_or_other / total_games if total_games else float("nan")
-        max_moves_trunc_rate = (
-            termination_counts.get("max_moves", 0) / total_games if total_games else float("nan")
-        )
-        value_targets = np.array([s.value for s in iteration_samples], dtype=np.float32)
-        value_mean = float(value_targets.mean()) if value_targets.size else float("nan")
-        value_std = float(value_targets.std()) if value_targets.size else float("nan")
+            dt = time.time() - t0
+            pl = _mean_metric("policy_loss")
+            vl = _mean_metric("value_loss")
+            policy_entropy = _mean_metric("policy_entropy")
+            value_sign_acc = _mean_metric("value_sign_acc")
+            policy_top1_agree = _mean_metric("policy_top1_agree")
+            grad_norm = _mean_metric("grad_norm")
 
-        term_summary = ", ".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
-        print(f"iter {it:3d} | sims {sims:3d} | games {cfg.train.games_per_iteration} "
-              f"| samples {new_samples:4d} | buffer {len(buffer):6d} "
-              f"| policy_loss {pl:.3f} | value_loss {vl:.3f} "
-              f"| ent {policy_entropy:.3f} | sign_acc {value_sign_acc:.3f} "
-              f"| decisive {decisive_rate:.3f} "
-              f"| ends {term_summary} "
-              f"| {dt:.1f}s", flush=True)
-        # Persist per-iteration training metrics BEFORE the gate so a gate failure
-        # (e.g. a Colab quota kill mid-match) cannot lose this iteration's metrics.
-        # Gate results are recorded separately in metrics_gates.csv.
-        _log_metrics(
-            cfg.train.checkpoint_dir,
-            it,
-            sims,
-            new_samples,
-            dt,
-            policy_loss=pl,
-            value_loss=vl,
-            policy_entropy=policy_entropy,
-            value_sign_acc=value_sign_acc,
-            policy_top1_agree=policy_top1_agree,
-            grad_norm=grad_norm,
-            mean_game_len=mean_game_len,
-            decisive_rate=decisive_rate,
-            white_win_rate=white_win_rate,
-            draw_rate=draw_rate,
-            max_moves_trunc_rate=max_moves_trunc_rate,
-            value_mean=value_mean,
-            value_std=value_std,
-            winrate_vs_prev=float("nan"),
-            learning_rate=cfg.train.learning_rate,
-            games=cfg.train.games_per_iteration,
-            train_steps=cfg.train.train_steps_per_iteration,
-            batch_size=cfg.train.batch_size,
-            buffer_size=len(buffer),
-            termination_counts=dict(termination_counts),
-        )
+            total_games = len(game_lengths)
+            white_wins = sum(1 for o in game_outcomes if o == 1)
+            black_wins = sum(1 for o in game_outcomes if o == -1)
+            draws_or_other = total_games - white_wins - black_wins
+            mean_game_len = float(np.mean(game_lengths)) if game_lengths else float("nan")
+            decisive_games = (
+                termination_counts.get("checkmate", 0)
+                + termination_counts.get("resign", 0)
+                + termination_counts.get("tablebase_win", 0)
+            )
+            decisive_rate = decisive_games / total_games if total_games else float("nan")
+            white_win_rate = white_wins / total_games if total_games else float("nan")
+            draw_rate = draws_or_other / total_games if total_games else float("nan")
+            max_moves_trunc_rate = (
+                termination_counts.get("max_moves", 0) / total_games if total_games else float("nan")
+            )
+            value_targets = np.array([s.value for s in iteration_samples], dtype=np.float32)
+            value_mean = float(value_targets.mean()) if value_targets.size else float("nan")
+            value_std = float(value_targets.std()) if value_targets.size else float("nan")
 
-        # Strength gate runs last and is isolated in try/except: a failure here
-        # (quota kill, OOM) leaves this iteration's checkpoint and metrics intact
-        # and does not abort the rest of the run.
-        if args.gate_every > 0 and it > 0 and it % args.gate_every == 0:
-            try:
-                previous_snapshot = _latest_snapshot_before(cfg.train.checkpoint_dir, it)
-                if previous_snapshot is None:
-                    print(f"gate iter {it}: skipped (no prior numbered snapshot found)")
-                else:
-                    prev_state = torch.load(previous_snapshot, map_location=args.device)
-                    if isinstance(prev_state, dict) and "model" in prev_state:
-                        prev_encoding_version = int(prev_state.get("encoding_version", 1))
-                        if prev_encoding_version != ENCODING_VERSION:
-                            print(
-                                f"gate iter {it}: skipped ({os.path.basename(previous_snapshot)} "
-                                f"encoding {prev_encoding_version} != {ENCODING_VERSION})"
-                            )
-                        else:
-                            prev_net_cfg = cfg.net
-                            if "net" in prev_state:
-                                prev_net_cfg = NetConfig(**prev_state["net"])
-                            prev_net = ChessNet(prev_net_cfg).to(args.device)
-                            prev_model = (
-                                prev_state["model"]
-                                if isinstance(prev_state, dict) and "model" in prev_state
-                                else prev_state
-                            )
-                            _load_matching_state_dict(prev_net, prev_model, label="gate load", verbose=False)
-                            gate_metrics = play_match(
-                                net, prev_net, cfg, n_games=args.gate_games, sims=sims, device=args.device
-                            )
-                            prev_it = -1
-                            base_name = os.path.basename(previous_snapshot)
-                            if base_name.startswith("ckpt_iter_") and base_name.endswith(".pt"):
-                                try:
-                                    prev_it = int(base_name[len("ckpt_iter_"):-len(".pt")])
-                                except ValueError:
-                                    pass
-                            total_wins = gate_metrics["wins_as_white"] + gate_metrics["wins_as_black"]
-                            total_losses = gate_metrics["losses_as_white"] + gate_metrics["losses_as_black"]
-                            total_draws = gate_metrics["draws_as_white"] + gate_metrics["draws_as_black"]
-                            print(
-                                f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
-                                f"-> {gate_metrics['winrate']:.3f} (Wins: {total_wins}, Losses: {total_losses}, Draws: {total_draws})"
-                            )
-                            _log_gate_metrics(
-                                cfg.train.checkpoint_dir,
-                                it,
-                                prev_it,
-                                gate_metrics,
-                                args.gate_games,
-                            )
+            term_summary = ", ".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
+            print(f"iter {it:3d} | sims {sims:3d} | games {cfg.train.games_per_iteration} "
+                  f"| samples {new_samples:4d} | buffer {len(buffer):6d} "
+                  f"| policy_loss {pl:.3f} | value_loss {vl:.3f} "
+                  f"| ent {policy_entropy:.3f} | sign_acc {value_sign_acc:.3f} "
+                  f"| lr {current_lr:.3e} "
+                  f"| decisive {decisive_rate:.3f} "
+                  f"| ends {term_summary} "
+                  f"| {dt:.1f}s", flush=True)
+            # Persist per-iteration training metrics BEFORE the gate so a gate failure
+            # (e.g. a Colab quota kill mid-match) cannot lose this iteration's metrics.
+            # Gate results are recorded separately in metrics_gates.csv.
+            _log_metrics(
+                cfg.train.checkpoint_dir,
+                it,
+                sims,
+                new_samples,
+                dt,
+                policy_loss=pl,
+                value_loss=vl,
+                policy_entropy=policy_entropy,
+                value_sign_acc=value_sign_acc,
+                policy_top1_agree=policy_top1_agree,
+                grad_norm=grad_norm,
+                mean_game_len=mean_game_len,
+                decisive_rate=decisive_rate,
+                white_win_rate=white_win_rate,
+                draw_rate=draw_rate,
+                max_moves_trunc_rate=max_moves_trunc_rate,
+                value_mean=value_mean,
+                value_std=value_std,
+                winrate_vs_prev=float("nan"),
+                learning_rate=current_lr,
+                games=cfg.train.games_per_iteration,
+                train_steps=cfg.train.train_steps_per_iteration,
+                batch_size=cfg.train.batch_size,
+                buffer_size=len(buffer),
+                termination_counts=dict(termination_counts),
+            )
+
+            # Strength gate runs last and is isolated in try/except: a failure here
+            # (quota kill, OOM) leaves this iteration's checkpoint and metrics intact
+            # and does not abort the rest of the run.
+            if args.gate_every > 0 and it > 0 and it % args.gate_every == 0:
+                try:
+                    previous_snapshot = _latest_snapshot_before(cfg.train.checkpoint_dir, it)
+                    if previous_snapshot is None:
+                        print(f"gate iter {it}: skipped (no prior numbered snapshot found)")
                     else:
-                        print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")
-            except Exception as exc:
-                print(f"gate iter {it}: failed ({exc}); continuing", flush=True)
+                        prev_state = torch.load(previous_snapshot, map_location=args.device)
+                        if isinstance(prev_state, dict) and "model" in prev_state:
+                            prev_encoding_version = int(prev_state.get("encoding_version", 1))
+                            if prev_encoding_version != ENCODING_VERSION:
+                                print(
+                                    f"gate iter {it}: skipped ({os.path.basename(previous_snapshot)} "
+                                    f"encoding {prev_encoding_version} != {ENCODING_VERSION})"
+                                )
+                            else:
+                                prev_net_cfg = cfg.net
+                                if "net" in prev_state:
+                                    prev_net_cfg = NetConfig(**prev_state["net"])
+                                prev_net = ChessNet(prev_net_cfg).to(args.device)
+                                prev_model = (
+                                    prev_state["model"]
+                                    if isinstance(prev_state, dict) and "model" in prev_state
+                                    else prev_state
+                                )
+                                _load_matching_state_dict(prev_net, prev_model, label="gate load", verbose=False)
+                                gate_metrics = play_match(
+                                    net, prev_net, cfg, n_games=args.gate_games, sims=sims, device=args.device
+                                )
+                                prev_it = -1
+                                base_name = os.path.basename(previous_snapshot)
+                                if base_name.startswith("ckpt_iter_") and base_name.endswith(".pt"):
+                                    try:
+                                        prev_it = int(base_name[len("ckpt_iter_"):-len(".pt")])
+                                    except ValueError:
+                                        pass
+                                total_wins = gate_metrics["wins_as_white"] + gate_metrics["wins_as_black"]
+                                total_losses = gate_metrics["losses_as_white"] + gate_metrics["losses_as_black"]
+                                total_draws = gate_metrics["draws_as_white"] + gate_metrics["draws_as_black"]
+                                print(
+                                    f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
+                                    f"-> {gate_metrics['winrate']:.3f} (Wins: {total_wins}, Losses: {total_losses}, Draws: {total_draws})"
+                                )
+                                _log_gate_metrics(
+                                    cfg.train.checkpoint_dir,
+                                    it,
+                                    prev_it,
+                                    gate_metrics,
+                                    args.gate_games,
+                                )
+                        else:
+                            print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")
+                except Exception as exc:
+                    print(f"gate iter {it}: failed ({exc}); continuing", flush=True)
+    finally:
+        if tablebase is not None:
+            tablebase.close()
 
 
 if __name__ == "__main__":

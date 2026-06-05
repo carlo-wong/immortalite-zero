@@ -29,9 +29,11 @@ app.add_middleware(
 )
 
 _cfg = Config()
-# Use IMMORTALITE_CHECKPOINT if set, otherwise fall back to the latest checkpoint
-# so a plain `uvicorn server.app:app` run picks up trained weights automatically.
-_default_checkpoint = os.path.join(_cfg.train.checkpoint_dir, "latest.pt")
+# Use IMMORTALITE_CHECKPOINT if set, otherwise fall back to the latest v2
+# checkpoint so a plain `uvicorn server.app:app` run picks up trained weights
+# automatically.
+_repo_root = pathlib.Path(__file__).resolve().parent.parent
+_default_checkpoint = str(_repo_root / "results" / "immortalite_checkpoints_v2" / "latest.pt")
 _checkpoint = os.environ.get("IMMORTALITE_CHECKPOINT") or (
     _default_checkpoint if os.path.exists(_default_checkpoint) else None
 )

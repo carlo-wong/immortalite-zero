@@ -1,12 +1,22 @@
 """Outcome classification and terminal-value tests."""
 
+import os
+
 import chess
+import chess.syzygy
 import numpy as np
+import pytest
 
 from engine.config import Config
 from engine.encoding import NUM_INPUT_PLANES, POLICY_SIZE
 from engine.mcts import MCTS
-from engine.selfplay import Sample, _assign_values, _termination_reason, play_game
+from engine.selfplay import (
+    Sample,
+    _assign_values,
+    _tablebase_adjudication,
+    _termination_reason,
+    play_game,
+)
 
 
 class FakeEvaluator:
@@ -40,6 +50,15 @@ def _fifty_move_board() -> chess.Board:
     board = chess.Board("7k/8/8/8/8/8/8/KR6 w - - 99 1")
     board.push_uci("b1b2")
     return board
+
+
+def _syzygy_path_or_skip() -> str:
+    path = os.environ.get("IMMORTALITE_SYZYGY_PATH")
+    if not path:
+        pytest.skip("Set IMMORTALITE_SYZYGY_PATH to run Syzygy adjudication tests.")
+    if not os.path.isdir(path):
+        pytest.skip(f"IMMORTALITE_SYZYGY_PATH does not exist: {path}")
+    return path
 
 
 def test_checkmate_values_are_plus_minus_one() -> None:
@@ -140,3 +159,42 @@ def test_mcts_treats_claimable_draws_as_terminal() -> None:
         assert result.root_value == -cfg.mcts.draw_contempt
         assert len(result.moves) == 0
         assert evaluator.calls == 0
+
+
+def test_tablebase_win_adjudication_assigns_plus_minus_one() -> None:
+    cfg = Config()
+    path = _syzygy_path_or_skip()
+    board = chess.Board("k7/8/8/8/8/8/8/KQ6 w - - 0 1")
+
+    tablebase = chess.syzygy.open_tablebase(path)
+    try:
+        termination, winner = _tablebase_adjudication(board, tablebase, max_pieces=5)
+    finally:
+        tablebase.close()
+
+    assert termination == "tablebase_win"
+    assert winner == chess.WHITE
+
+    samples = _sample_pair()
+    _assign_values(samples, None, termination, cfg, move_count=0, winner_override=winner)
+    assert samples[0].value == 1.0
+    assert samples[1].value == -1.0
+
+
+def test_tablebase_draw_adjudication_gets_draw_penalty() -> None:
+    cfg = Config()
+    path = _syzygy_path_or_skip()
+    board = chess.Board("k7/8/8/8/8/8/8/K7 w - - 0 1")
+
+    tablebase = chess.syzygy.open_tablebase(path)
+    try:
+        termination, winner = _tablebase_adjudication(board, tablebase, max_pieces=5)
+    finally:
+        tablebase.close()
+
+    assert termination == "tablebase_draw"
+    assert winner is None
+
+    samples = _sample_pair()
+    _assign_values(samples, None, termination, cfg, move_count=0)
+    assert all(s.value == -cfg.train.draw_penalty for s in samples)
