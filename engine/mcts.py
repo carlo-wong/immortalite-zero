@@ -31,13 +31,16 @@ def _softmax(x: np.ndarray) -> np.ndarray:
 
 
 class _Node:
-    __slots__ = ("prior", "children", "N", "W")
+    __slots__ = ("prior", "children", "N", "W", "terminal_checked", "is_terminal", "terminal_value")
 
     def __init__(self, prior: float):
         self.prior = prior
         self.children: dict[int, _Node] = {}
         self.N = 0
         self.W = 0.0
+        self.terminal_checked = False
+        self.is_terminal = False
+        self.terminal_value = 0.0
 
     @property
     def Q(self) -> float:
@@ -114,8 +117,9 @@ class MCTS:
         sims = simulations if simulations is not None else self.cfg.simulations
         root_turn = board.turn
         root = _Node(0.0)
-        if self._is_terminal(board):
-            return self._collect(root, board, self._terminal_value(board, root_turn))
+        root_terminal, root_terminal_value = self._terminal_eval(root, board, root_turn)
+        if root_terminal:
+            return self._collect(root, board, root_terminal_value)
 
         logits, value = yield board
         root_value = self._expand_from_eval(root, board, logits, value)
@@ -128,7 +132,8 @@ class MCTS:
             sim_board = board.copy()
             path = [root]
 
-            while node.expanded and not self._is_terminal(sim_board):
+            is_terminal, _ = self._terminal_eval(node, sim_board, root_turn)
+            while node.expanded and not is_terminal:
                 idx, child = self._select_child(node)
                 move = index_to_move(idx, sim_board)
                 if move is None:  # safety: should not happen post round-trip test
@@ -136,9 +141,11 @@ class MCTS:
                 sim_board.push(move)
                 node = child
                 path.append(node)
+                is_terminal, _ = self._terminal_eval(node, sim_board, root_turn)
 
-            if self._is_terminal(sim_board):
-                value = self._terminal_value(sim_board, root_turn)
+            is_terminal, terminal_value = self._terminal_eval(node, sim_board, root_turn)
+            if is_terminal:
+                value = terminal_value
             else:
                 logits, value = yield sim_board
                 value = self._expand_from_eval(node, sim_board, logits, value)
@@ -194,6 +201,18 @@ class MCTS:
         # claim_draw=True is costlier per node, but keeps search aligned with
         # self-play and avoids overvaluing claimable repetition/50-move draws.
         return board.is_game_over(claim_draw=self.cfg.claim_draw)
+
+    def _terminal_eval(self, node: _Node, board: chess.Board, root_turn: chess.Color
+                       ) -> tuple[bool, float]:
+        if node.terminal_checked:
+            return node.is_terminal, node.terminal_value
+        node.is_terminal = self._is_terminal(board)
+        if node.is_terminal:
+            node.terminal_value = self._terminal_value(board, root_turn)
+        else:
+            node.terminal_value = 0.0
+        node.terminal_checked = True
+        return node.is_terminal, node.terminal_value
 
     def _terminal_value(self, board: chess.Board,
                         root_turn: chess.Color | None = None) -> float:

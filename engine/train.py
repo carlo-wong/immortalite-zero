@@ -129,13 +129,14 @@ def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str) -> di
     }
 
 
-def save_checkpoint(net: ChessNet, cfg: Config, path: str, iteration: int = 0) -> None:
+def save_checkpoint(net: torch.nn.Module, cfg: Config, path: str, iteration: int = 0) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     # Store the net architecture so the loader can rebuild a matching model,
     # and the iteration so training resumes with a continuous step count.
+    model_module = getattr(net, "_orig_mod", net)
     torch.save(
         {
-            "model": net.state_dict(),
+            "model": model_module.state_dict(),
             "net": asdict(cfg.net),
             "iteration": iteration,
             "encoding_version": ENCODING_VERSION,
@@ -541,6 +542,8 @@ def main() -> None:
                         help="run strength gate every N iterations (0 = off)")
     parser.add_argument("--gate-games", type=int, default=30,
                         help="games per strength gate (current net vs previous snapshot)")
+    parser.add_argument("--gate-sims", type=int, default=None,
+                        help="override sims/move for gate matches (defaults to self-play sims)")
     parser.add_argument("--gate-exploration-moves", type=int, default=10,
                         help="sample moves for first N plies in gate games")
     parser.add_argument("--gate-baseline", type=str, default=None,
@@ -558,6 +561,11 @@ def main() -> None:
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         print("warning: CUDA requested but not available; falling back to --device cpu")
         args.device = "cpu"
+    if args.device.startswith("cuda"):
+        torch.backends.cudnn.benchmark = True
+        torch.set_float32_matmul_precision("high")
+    if args.gate_sims is not None and args.gate_sims <= 0:
+        raise ValueError("--gate-sims must be >= 1")
 
     cfg = Config()
     if args.checkpoint_dir:
@@ -635,6 +643,7 @@ def main() -> None:
         f"resign_plies={cfg.train.resign_plies} "
         f"resign_min_moves={cfg.train.resign_min_moves} "
         f"gate_games={args.gate_games} "
+        f"gate_sims={args.gate_sims if args.gate_sims is not None else 'match-selfplay'} "
         f"gate_exploration_moves={args.gate_exploration_moves} "
         f"gate_baseline={args.gate_baseline or 'off'}"
     )
@@ -664,6 +673,11 @@ def main() -> None:
         start_iter = int(state.get("iteration", -1)) + 1
         print(f"resumed from {args.resume} at iteration {start_iter} "
               f"(net: {cfg.net.blocks}x{cfg.net.filters})")
+    if args.device.startswith("cuda"):
+        if hasattr(torch, "compile"):
+            net = torch.compile(net, dynamic=True)
+        else:
+            print("warning: torch.compile is unavailable in this runtime; continuing without compile")
 
     optimizer = torch.optim.Adam(net.parameters(), lr=cfg.train.learning_rate,
                                  weight_decay=cfg.train.weight_decay)
@@ -820,6 +834,7 @@ def main() -> None:
             # (quota kill, OOM) leaves this iteration's checkpoint and metrics intact
             # and does not abort the rest of the run.
             if args.gate_every > 0 and it > 0 and it % args.gate_every == 0:
+                gate_sims = args.gate_sims if args.gate_sims is not None else sims
                 try:
                     previous_snapshot = _latest_snapshot_before(cfg.train.checkpoint_dir, it)
                     if previous_snapshot is None:
@@ -849,7 +864,7 @@ def main() -> None:
                                     prev_net,
                                     cfg,
                                     n_games=args.gate_games,
-                                    sims=sims,
+                                    sims=gate_sims,
                                     device=args.device,
                                     exploration_moves=args.gate_exploration_moves,
                                 )
@@ -911,7 +926,7 @@ def main() -> None:
                                         baseline_net,
                                         cfg,
                                         n_games=args.gate_games,
-                                        sims=sims,
+                                        sims=gate_sims,
                                         device=args.device,
                                         exploration_moves=args.gate_exploration_moves,
                                     )
