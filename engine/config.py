@@ -52,7 +52,7 @@ class TrainConfig:
     learning_rate: float = 1e-3
     lr_min: float = 1e-4
     lr_warmup_iters: int = 2
-    lr_total_iters: int = 100
+    lr_total_iters: int = 160
     weight_decay: float = 1e-4
     replay_buffer_size: int = 50_000
     replay_window: int = 150_000
