@@ -50,9 +50,9 @@ class TrainConfig:
     train_steps_per_iteration: int = 200
     batch_size: int = 128
     learning_rate: float = 1e-3
-    lr_min: float = 1e-4
+    lr_min: float = 2e-4
     lr_warmup_iters: int = 2
-    lr_total_iters: int = 160
+    lr_total_iters: int = 100
     weight_decay: float = 1e-4
     replay_buffer_size: int = 50_000
     replay_window: int = 150_000
