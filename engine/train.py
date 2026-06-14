@@ -229,22 +229,11 @@ def _winner_of(game: GameResult) -> int:
     return 1 if winner_is_white else -1
 
 
-def _latest_snapshot_before(ckpt_dir: str, iteration: int) -> str | None:
-    if not os.path.isdir(ckpt_dir):
+def _snapshot_at_iter(ckpt_dir: str, iteration: int) -> str | None:
+    if iteration < 0:
         return None
-    best_iter = -1
-    best_path: str | None = None
-    for name in os.listdir(ckpt_dir):
-        if not (name.startswith("ckpt_iter_") and name.endswith(".pt")):
-            continue
-        idx_text = name[len("ckpt_iter_"):-len(".pt")]
-        if not idx_text.isdigit():
-            continue
-        idx = int(idx_text)
-        if idx < iteration and idx > best_iter:
-            best_iter = idx
-            best_path = os.path.join(ckpt_dir, name)
-    return best_path
+    path = os.path.join(ckpt_dir, f"ckpt_iter_{iteration:04d}.pt")
+    return path if os.path.exists(path) else None
 
 
 def _play_match_game(cfg: Config, simulations: int,
@@ -541,13 +530,11 @@ def main() -> None:
     parser.add_argument("--gate-every", type=int, default=0,
                         help="run strength gate every N iterations (0 = off)")
     parser.add_argument("--gate-games", type=int, default=30,
-                        help="games per strength gate (current net vs previous snapshot)")
+                        help="games per strength gate (current net vs checkpoint N iters ago)")
     parser.add_argument("--gate-sims", type=int, default=None,
                         help="override sims/move for gate matches (defaults to self-play sims)")
     parser.add_argument("--gate-exploration-moves", type=int, default=10,
                         help="sample moves for first N plies in gate games")
-    parser.add_argument("--gate-baseline", type=str, default=None,
-                        help="fixed checkpoint path for an additional anchor gate")
     parser.add_argument("--lr", type=float, default=None,
                         help="override learning rate")
     parser.add_argument("--lr-min", type=float, default=None,
@@ -644,8 +631,7 @@ def main() -> None:
         f"resign_min_moves={cfg.train.resign_min_moves} "
         f"gate_games={args.gate_games} "
         f"gate_sims={args.gate_sims if args.gate_sims is not None else 'match-selfplay'} "
-        f"gate_exploration_moves={args.gate_exploration_moves} "
-        f"gate_baseline={args.gate_baseline or 'off'}"
+        f"gate_exploration_moves={args.gate_exploration_moves}"
     )
 
     # When resuming, the checkpoint's own architecture wins over the CLI preset
@@ -836,9 +822,10 @@ def main() -> None:
             if args.gate_every > 0 and it > 0 and it % args.gate_every == 0:
                 gate_sims = args.gate_sims if args.gate_sims is not None else sims
                 try:
-                    previous_snapshot = _latest_snapshot_before(cfg.train.checkpoint_dir, it)
+                    prev_it = it - args.gate_every
+                    previous_snapshot = _snapshot_at_iter(cfg.train.checkpoint_dir, prev_it)
                     if previous_snapshot is None:
-                        print(f"gate iter {it}: skipped (no prior numbered snapshot found)")
+                        print(f"gate iter {it}: skipped (no snapshot at iter {prev_it})")
                     else:
                         prev_state = torch.load(previous_snapshot, map_location=args.device)
                         if isinstance(prev_state, dict) and "model" in prev_state:
@@ -868,13 +855,6 @@ def main() -> None:
                                     device=args.device,
                                     exploration_moves=args.gate_exploration_moves,
                                 )
-                                prev_it = -1
-                                base_name = os.path.basename(previous_snapshot)
-                                if base_name.startswith("ckpt_iter_") and base_name.endswith(".pt"):
-                                    try:
-                                        prev_it = int(base_name[len("ckpt_iter_"):-len(".pt")])
-                                    except ValueError:
-                                        pass
                                 total_wins = gate_metrics["wins_as_white"] + gate_metrics["wins_as_black"]
                                 total_losses = gate_metrics["losses_as_white"] + gate_metrics["losses_as_black"]
                                 total_draws = gate_metrics["draws_as_white"] + gate_metrics["draws_as_black"]
@@ -891,80 +871,6 @@ def main() -> None:
                                 )
                         else:
                             print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")
-
-                    if args.gate_baseline:
-                        if not os.path.exists(args.gate_baseline):
-                            print(f"gate iter {it}: baseline skipped (missing {args.gate_baseline})")
-                        else:
-                            baseline_state = torch.load(args.gate_baseline, map_location=args.device)
-                            if not (isinstance(baseline_state, dict) and "model" in baseline_state):
-                                print(
-                                    f"gate iter {it}: baseline skipped "
-                                    f"(invalid snapshot {args.gate_baseline})"
-                                )
-                            else:
-                                baseline_encoding_version = int(baseline_state.get("encoding_version", 1))
-                                if baseline_encoding_version != ENCODING_VERSION:
-                                    print(
-                                        f"gate iter {it}: baseline skipped "
-                                        f"(encoding {baseline_encoding_version} != {ENCODING_VERSION})"
-                                    )
-                                else:
-                                    baseline_net_cfg = cfg.net
-                                    if "net" in baseline_state:
-                                        baseline_net_cfg = NetConfig(**baseline_state["net"])
-                                    baseline_net = ChessNet(baseline_net_cfg).to(args.device)
-                                    baseline_model = baseline_state["model"]
-                                    _load_matching_state_dict(
-                                        baseline_net,
-                                        baseline_model,
-                                        label="baseline gate load",
-                                        verbose=False,
-                                    )
-                                    baseline_metrics = play_match(
-                                        net,
-                                        baseline_net,
-                                        cfg,
-                                        n_games=args.gate_games,
-                                        sims=gate_sims,
-                                        device=args.device,
-                                        exploration_moves=args.gate_exploration_moves,
-                                    )
-                                    baseline_prev_it = int(baseline_state.get("iteration", -1))
-                                    baseline_name = os.path.basename(args.gate_baseline)
-                                    if baseline_name.startswith("ckpt_iter_") and baseline_name.endswith(".pt"):
-                                        try:
-                                            baseline_prev_it = int(
-                                                baseline_name[len("ckpt_iter_"):-len(".pt")]
-                                            )
-                                        except ValueError:
-                                            pass
-                                    baseline_wins = (
-                                        baseline_metrics["wins_as_white"]
-                                        + baseline_metrics["wins_as_black"]
-                                    )
-                                    baseline_losses = (
-                                        baseline_metrics["losses_as_white"]
-                                        + baseline_metrics["losses_as_black"]
-                                    )
-                                    baseline_draws = (
-                                        baseline_metrics["draws_as_white"]
-                                        + baseline_metrics["draws_as_black"]
-                                    )
-                                    print(
-                                        f"gate iter {it}: current vs baseline "
-                                        f"{os.path.basename(args.gate_baseline)} "
-                                        f"-> {baseline_metrics['winrate']:.3f} "
-                                        f"(Wins: {baseline_wins}, Losses: {baseline_losses}, "
-                                        f"Draws: {baseline_draws})"
-                                    )
-                                    _log_gate_metrics(
-                                        cfg.train.checkpoint_dir,
-                                        it,
-                                        baseline_prev_it,
-                                        baseline_metrics,
-                                        args.gate_games,
-                                    )
                 except Exception as exc:
                     print(f"gate iter {it}: failed ({exc}); continuing", flush=True)
     finally:
