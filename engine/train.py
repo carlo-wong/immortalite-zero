@@ -110,7 +110,7 @@ def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str) -> di
 
     optimizer.zero_grad()
     loss.backward()
-    grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1e9)
+    grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=5.0)
     optimizer.step()
 
     with torch.no_grad():
@@ -179,6 +179,30 @@ def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
         )
 
 
+def _update_metrics_winrate_vs_prev(ckpt_dir: str, it: int, winrate: float) -> None:
+    """Patch winrate_vs_prev on the most recent metrics row for *it*."""
+    path = os.path.join(ckpt_dir, "metrics.csv")
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        lines = f.readlines()
+    if len(lines) < 2:
+        return
+    header = lines[0].strip().split(",")
+    try:
+        winrate_idx = header.index("winrate_vs_prev")
+    except ValueError:
+        return
+    for i in range(len(lines) - 1, 0, -1):
+        parts = lines[i].rstrip("\n").split(",")
+        if parts and parts[0] == str(it):
+            parts[winrate_idx] = f"{winrate:.6f}"
+            lines[i] = ",".join(parts) + "\n"
+            break
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+
 def _log_step_metrics(ckpt_dir: str, it: int, step: int, metrics: dict[str, float]) -> None:
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = os.path.join(ckpt_dir, "metrics_steps.csv")
@@ -236,29 +260,10 @@ def _snapshot_at_iter(ckpt_dir: str, iteration: int) -> str | None:
     return path if os.path.exists(path) else None
 
 
-def _play_match_game(cfg: Config, simulations: int,
-                     white_eval: NetEvaluator, black_eval: NetEvaluator,
-                     exploration_moves: int = 10) -> GameResult:
-    # Use a few exploration moves so the networks don't play the exact same 2 games 20 times!
-    gen = play_game_gen(
-        cfg,
-        simulations,
-        add_noise=False,
-        exploration_moves=exploration_moves,
-    )
-    req = next(gen)
-    while True:
-        evaluator = white_eval if req.turn else black_eval
-        logits, value = evaluator.evaluate(req)
-        try:
-            req = gen.send((logits, value))
-        except StopIteration as stop:
-            return stop.value
-
-
 def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
                n_games: int, sims: int, device: str,
-               exploration_moves: int = 10) -> dict:
+               exploration_moves: int = 10,
+               tablebase: chess.syzygy.Tablebase | None = None) -> dict:
     if n_games <= 0:
         return {
             "winrate": float("nan"),
@@ -274,11 +279,12 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
 
     match_cfg = deepcopy(cfg)
     match_cfg.beauty.enabled = False
+    # Align gate search contempt with self-play (draw_penalty), not 0.0 — keeps
+    # eval matches consistent with training rather than biasing toward draws.
+    match_cfg.mcts.draw_contempt = match_cfg.train.draw_penalty
     # Disable resignation during strength evaluation matches
     match_cfg.train.resign_threshold = -1.1
     match_cfg.train.resign_plies = 0
-    # Disable draw contempt/penalty during strength evaluation matches
-    match_cfg.mcts.draw_contempt = 0.0
 
     eval_a = NetEvaluator(net_a, device=device)
     eval_b = NetEvaluator(net_b, device=device)
@@ -330,6 +336,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
                 sims,
                 add_noise=False,
                 exploration_moves=exploration_moves,
+                tablebase=tablebase,
             )
             active.append((gen, next(gen), a_is_white))
             launched += 1
@@ -785,9 +792,9 @@ def main() -> None:
                   f"| decisive {decisive_rate:.3f} "
                   f"| ends {term_summary} "
                   f"| {dt:.1f}s", flush=True)
-            # Persist per-iteration training metrics BEFORE the gate so a gate failure
-            # (e.g. a Colab quota kill mid-match) cannot lose this iteration's metrics.
-            # Gate results are recorded separately in metrics_gates.csv.
+
+            # Log training metrics before the gate so OOM during gating still
+            # preserves this iteration's row (winrate_vs_prev patched after gate).
             _log_metrics(
                 cfg.train.checkpoint_dir,
                 it,
@@ -816,9 +823,6 @@ def main() -> None:
                 termination_counts=dict(termination_counts),
             )
 
-            # Strength gate runs last and is isolated in try/except: a failure here
-            # (quota kill, OOM) leaves this iteration's checkpoint and metrics intact
-            # and does not abort the rest of the run.
             if args.gate_every > 0 and it > 0 and it % args.gate_every == 0:
                 gate_sims = args.gate_sims if args.gate_sims is not None else sims
                 try:
@@ -854,7 +858,9 @@ def main() -> None:
                                     sims=gate_sims,
                                     device=args.device,
                                     exploration_moves=args.gate_exploration_moves,
+                                    tablebase=tablebase,
                                 )
+                                winrate_vs_prev = float(gate_metrics["winrate"])
                                 total_wins = gate_metrics["wins_as_white"] + gate_metrics["wins_as_black"]
                                 total_losses = gate_metrics["losses_as_white"] + gate_metrics["losses_as_black"]
                                 total_draws = gate_metrics["draws_as_white"] + gate_metrics["draws_as_black"]
@@ -868,6 +874,9 @@ def main() -> None:
                                     prev_it,
                                     gate_metrics,
                                     args.gate_games,
+                                )
+                                _update_metrics_winrate_vs_prev(
+                                    cfg.train.checkpoint_dir, it, winrate_vs_prev,
                                 )
                         else:
                             print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")

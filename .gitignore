@@ -1,10 +1,16 @@
 __pycache__/
 *.pyc
+.pytest_cache/
 checkpoints/
 *.pt
+*.npz
 .venv/
+.env
+.env.*
 .DS_Store
+Thumbs.db
 research/
 .cursor/
 *.zip
 results/
+AGENTS.md
