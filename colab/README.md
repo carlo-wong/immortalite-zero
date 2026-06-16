@@ -1,4 +1,4 @@
-# Training Immortalite on Google Colab
+# Training Immortalite Zero on Google Colab
 
 A step-by-step guide to training the engine on a free Colab GPU. No prior ML
 experience needed — just follow the cells in order.
@@ -13,7 +13,7 @@ experience needed — just follow the cells in order.
 ## Before you start
 
 - A **Google account** (for Colab + Drive).
-- The code pushed to GitHub (already done: `github.com/carlo-wong/immortalite`).
+- The code pushed to GitHub (already done: `github.com/carlo-wong/immortalite-zero`).
 - Whenever you change the engine locally, `git push` so Colab can pull it.
 
 ---
@@ -22,10 +22,10 @@ experience needed — just follow the cells in order.
 
 Click this link (it opens the notebook straight from GitHub):
 
-**https://colab.research.google.com/github/carlo-wong/immortalite/blob/main/colab/train.ipynb**
+**https://colab.research.google.com/github/carlo-wong/immortalite-zero/blob/main/colab/train.ipynb**
 
 Or: go to [colab.research.google.com](https://colab.research.google.com) →
-**File → Open notebook → GitHub** → paste `carlo-wong/immortalite`.
+**File → Open notebook → GitHub** → paste `carlo-wong/immortalite-zero`.
 
 ## Step 2 — Turn on the GPU
 
@@ -41,7 +41,7 @@ Press **Shift+Enter** on each cell, or **Runtime → Run all**. Here's what each
 |------|--------------|
 | 1 | Clones the repo (and `git pull`s the latest each time you re-run). |
 | 2 | Installs `python-chess` (PyTorch is already on Colab). |
-| 3 | **Mounts Google Drive** — a popup asks you to authorize. Checkpoints save to `MyDrive/immortalite_checkpoints`. |
+| 3 | **Mounts Google Drive** — a popup asks you to authorize. Checkpoints save to `MyDrive/immortalite_zero_checkpoints`. |
 | 4 | Confirms the GPU is available (should print a Tesla T4 or similar). |
 | 5 | **Trains.** This is the long one — it prints a line per iteration with the losses. |
 | 6 | Plots the loss curves so you can see it learning. Run it anytime. |
@@ -91,13 +91,13 @@ Then in Colab just **re-run cell 1** (it does `git pull`) and continue training.
 
 ## Step 7 — Use the trained engine locally
 
-1. In Google Drive, open `immortalite_checkpoints` and **download `latest.pt`**.
+1. In Google Drive, open `immortalite_zero_checkpoints` and **download `latest.pt`**.
 2. Put it in your local `checkpoints/` folder (or anywhere).
 3. Start the analysis server pointing at it:
 
 ```bash
 # Windows (PowerShell)
-$env:IMMORTALITE_CHECKPOINT="checkpoints\latest.pt"
+$env:IMMORTALITE_ZERO_CHECKPOINT="checkpoints\latest.pt"
 python -m uvicorn server.app:app --port 8000
 ```
 

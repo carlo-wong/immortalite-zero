@@ -1,7 +1,7 @@
 """FastAPI analysis backend for the web GUI.
 
 Run:  python -m uvicorn server.app:app --reload --port 8000
-Optional env var IMMORTALITE_CHECKPOINT points at a trained checkpoint.
+Optional env var IMMORTALITE_ZERO_CHECKPOINT points at a trained checkpoint.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from engine.analyze import Analyzer
 from engine.config import Config
 
-app = FastAPI(title="Immortalite Analysis")
+app = FastAPI(title="Immortalite Zero Analysis")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,12 +29,19 @@ app.add_middleware(
 )
 
 _cfg = Config()
-# Use IMMORTALITE_CHECKPOINT if set, otherwise fall back to the latest v2
-# checkpoint so a plain `uvicorn server.app:app` run picks up trained weights
-# automatically.
+# Use IMMORTALITE_ZERO_CHECKPOINT if set, otherwise fall back to the latest
+# checkpoint under results/ so a plain `uvicorn server.app:app` run picks up
+# trained weights automatically.
 _repo_root = pathlib.Path(__file__).resolve().parent.parent
-_default_checkpoint = str(_repo_root / "results" / "immortalite_checkpoints_v2" / "latest.pt")
-_checkpoint = os.environ.get("IMMORTALITE_CHECKPOINT") or (
+_default_checkpoint_candidates = (
+    _repo_root / "results" / "immortalite_zero_checkpoints" / "latest.pt",
+    _repo_root / "results" / "immortalite_checkpoints_v2" / "latest.pt",
+)
+_default_checkpoint = next(
+    (str(path) for path in _default_checkpoint_candidates if path.exists()),
+    str(_default_checkpoint_candidates[0]),
+)
+_checkpoint = os.environ.get("IMMORTALITE_ZERO_CHECKPOINT") or (
     _default_checkpoint if os.path.exists(_default_checkpoint) else None
 )
 _analyzer = Analyzer(_checkpoint, _cfg)

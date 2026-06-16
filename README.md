@@ -1,4 +1,4 @@
-# Immortalite
+# Immortalite Zero
 
 A **lightweight, self-play chess engine** in the AlphaZero family (neural network + MCTS, *not* brute-force search), tuned to play **beautiful-but-sound** chess — sacrifices, attacks, tactics, and surprising "alien" moves — wrapped in a Lichess-style web analysis tool.
 
@@ -48,7 +48,7 @@ To analyze with a trained net, point the server at a checkpoint:
 
 ```bash
 # Windows
-set IMMORTALITE_CHECKPOINT=checkpoints\latest.pt
+set IMMORTALITE_ZERO_CHECKPOINT=checkpoints\latest.pt
 python -m uvicorn server.app:app --port 8000
 ```
 
@@ -98,4 +98,3 @@ Options: `Simulations` (search budget/move), `Beauty` (play beautiful vs best), 
 - Optional supervised pretraining on attacking-master games (Tal, Kasparov, Morphy) for more strength + sharper style.
 - Full Gumbel sequential-halving budget allocation in search.
 - Upgrade GUI to React + Chessground if a richer UI is wanted.
-```

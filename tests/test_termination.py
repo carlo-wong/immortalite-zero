@@ -53,11 +53,11 @@ def _fifty_move_board() -> chess.Board:
 
 
 def _syzygy_path_or_skip() -> str:
-    path = os.environ.get("IMMORTALITE_SYZYGY_PATH")
+    path = os.environ.get("IMMORTALITE_ZERO_SYZYGY_PATH")
     if not path:
-        pytest.skip("Set IMMORTALITE_SYZYGY_PATH to run Syzygy adjudication tests.")
+        pytest.skip("Set IMMORTALITE_ZERO_SYZYGY_PATH to run Syzygy adjudication tests.")
     if not os.path.isdir(path):
-        pytest.skip(f"IMMORTALITE_SYZYGY_PATH does not exist: {path}")
+        pytest.skip(f"IMMORTALITE_ZERO_SYZYGY_PATH does not exist: {path}")
     return path
 
 
