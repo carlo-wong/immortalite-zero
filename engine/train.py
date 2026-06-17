@@ -11,6 +11,7 @@ import argparse
 import math
 import os
 import random
+import tempfile
 import time
 import zipfile
 from copy import deepcopy
@@ -30,14 +31,6 @@ from .selfplay import GameResult, Sample, play_game_gen, play_games_batched
 
 _SAMPLE_SHARD_PREFIX = "samples_iter_"
 _SAMPLE_SHARD_SUFFIX = ".npz"
-
-
-def _sims_for_iteration(cfg: Config, it: int) -> int:
-    t = cfg.train
-    if it >= t.sims_ramp_iterations:
-        return t.sims_end
-    frac = it / max(1, t.sims_ramp_iterations)
-    return int(round(t.sims_start + frac * (t.sims_end - t.sims_start)))
 
 
 def _lr_for_iteration(cfg: Config, it: int) -> float:
@@ -130,19 +123,26 @@ def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str) -> di
 
 
 def save_checkpoint(net: torch.nn.Module, cfg: Config, path: str, iteration: int = 0) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    ckpt_dir = os.path.dirname(path) or "."
+    os.makedirs(ckpt_dir, exist_ok=True)
     # Store the net architecture so the loader can rebuild a matching model,
     # and the iteration so training resumes with a continuous step count.
     model_module = getattr(net, "_orig_mod", net)
-    torch.save(
-        {
-            "model": model_module.state_dict(),
-            "net": asdict(cfg.net),
-            "iteration": iteration,
-            "encoding_version": ENCODING_VERSION,
-        },
-        path,
-    )
+    payload = {
+        "model": model_module.state_dict(),
+        "net": asdict(cfg.net),
+        "iteration": iteration,
+        "encoding_version": ENCODING_VERSION,
+    }
+    fd, tmp_path = tempfile.mkstemp(dir=ckpt_dir, suffix=".pt.tmp")
+    os.close(fd)
+    try:
+        torch.save(payload, tmp_path)
+        os.replace(tmp_path, path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
 
 
 def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
@@ -502,14 +502,8 @@ def main() -> None:
     parser.add_argument("--checkpoint-dir", default=None)
     # Per-iteration workload overrides (lower these for faster CPU iterations).
     parser.add_argument("--games", type=int, default=None, help="self-play games per iteration")
-    parser.add_argument("--sims", type=int, default=None, help="fixed MCTS sims/move (disables ramp)")
+    parser.add_argument("--sims", type=int, default=None, help="MCTS sims/move")
     parser.add_argument("--train-steps", type=int, default=None, help="optimizer steps per iteration")
-    parser.add_argument(
-        "--c1-stage",
-        choices=["off", "24", "32", "48", "64"],
-        default="off",
-        help="throughput ramp profile: sets games/train-steps/concurrency for C1",
-    )
     parser.add_argument("--max-game-moves", type=int, default=None,
                         help="self-play truncation cap (C2 shaping)")
     parser.add_argument("--draw-penalty", type=float, default=None,
@@ -569,30 +563,19 @@ def main() -> None:
         cfg.train.games_per_iteration = 6
         cfg.train.selfplay_concurrency = 4
         cfg.train.train_steps_per_iteration = 80
-        cfg.train.sims_start, cfg.train.sims_end = 24, 60
+        cfg.train.sims_per_move = 48
     if args.gpu:
         cfg.net.blocks, cfg.net.filters = 8, 96
-        cfg.train.games_per_iteration = 12
+        cfg.train.games_per_iteration = 64
         cfg.train.selfplay_concurrency = 64
-        cfg.train.train_steps_per_iteration = 300
-        cfg.train.sims_start, cfg.train.sims_end = 48, 128
-    c1_profiles = {
-        "24": (24, 480, 24),
-        "32": (32, 640, 32),
-        "48": (48, 960, 48),
-        "64": (64, 1280, 64),
-    }
-    if args.c1_stage != "off":
-        games, steps, concurrency = c1_profiles[args.c1_stage]
-        cfg.train.games_per_iteration = games
-        cfg.train.train_steps_per_iteration = steps
-        cfg.train.selfplay_concurrency = concurrency
+        cfg.train.train_steps_per_iteration = 400
+        cfg.train.sims_per_move = 100
     if args.games is not None:
         cfg.train.games_per_iteration = args.games
     if args.train_steps is not None:
         cfg.train.train_steps_per_iteration = args.train_steps
     if args.sims is not None:
-        cfg.train.sims_start = cfg.train.sims_end = args.sims
+        cfg.train.sims_per_move = args.sims
     if args.concurrency is not None:
         cfg.train.selfplay_concurrency = args.concurrency
     if args.replay_window is not None:
@@ -692,7 +675,7 @@ def main() -> None:
             current_lr = _lr_for_iteration(cfg, it)
             for param_group in optimizer.param_groups:
                 param_group["lr"] = current_lr
-            sims = _sims_for_iteration(cfg, it)
+            sims = cfg.train.sims_per_move
             evaluator = NetEvaluator(net, device=args.device)
 
             t0 = time.time()

@@ -23,7 +23,7 @@ class MCTSConfig:
     gumbel_c_visit: float = 50.0
     gumbel_c_scale: float = 1.0
     # Search contempt: root treats draw terminals as slightly worse than 0.
-    draw_contempt: float = 0.10
+    draw_contempt: float = 0.03
     # claim_draw=True catches threefold/50-move draws inside search, but is
     # a bit more expensive than plain terminal checks.
     claim_draw: bool = True
@@ -55,21 +55,18 @@ class TrainConfig:
     lr_total_iters: int = 100
     weight_decay: float = 1e-4
     replay_buffer_size: int = 50_000
-    replay_window: int = 150_000
+    replay_window: int = 50_000
     max_game_moves: int = 200
     syzygy_path: str | None = None
     tb_max_pieces: int = 5
-    # Reward shaping for "beautiful" play.
-    draw_penalty: float = 0.10      # discourage dull draws -> more decisive play
+    # Reward shaping: mild draw aversion (literature ~0–0.03 at this scale).
+    draw_penalty: float = 0.03
     # Optional self-play resignation. Disabled by default.
     resign_threshold: float = -1.1  # enable with value in [-1, 1]
     resign_plies: int = 0            # consecutive plies below threshold before resign
     resign_min_moves: int = 0        # do not allow resignation before this many plies
     fast_mate_bonus: float = 0.0    # >0 rewards quicker checkmates
-    # Progressive simulation: start cheap, ramp up (MiniZero trick).
-    sims_start: int = 30
-    sims_end: int = 100
-    sims_ramp_iterations: int = 20
+    sims_per_move: int = 100        # fixed MCTS sims/move (no ramp)
     checkpoint_dir: str = "checkpoints"
 
 

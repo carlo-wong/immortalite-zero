@@ -12,6 +12,7 @@ import torch
 
 from .beauty import compute_beauty, select_beautiful_move
 from .config import Config, NetConfig
+from .encoding import ENCODING_VERSION
 from .mcts import MCTS, SearchResult
 from .network import ChessNet, NetEvaluator
 
@@ -27,6 +28,15 @@ def load_evaluator(checkpoint_path: str | None, cfg: Config, device: str = "cpu"
     state = None
     if checkpoint_path and os.path.exists(checkpoint_path):
         state = torch.load(checkpoint_path, map_location=device)
+        ckpt_encoding_version = 1
+        if isinstance(state, dict):
+            ckpt_encoding_version = int(state.get("encoding_version", 1))
+        if ckpt_encoding_version != ENCODING_VERSION:
+            raise ValueError(
+                f"checkpoint encoding version {ckpt_encoding_version} does not match "
+                f"current encoding version {ENCODING_VERSION}; use a checkpoint "
+                f"trained with the current encoding"
+            )
         if isinstance(state, dict) and "net" in state:
             net_cfg = NetConfig(**state["net"])  # rebuild matching architecture
     net = ChessNet(net_cfg)

@@ -21,7 +21,7 @@ engine/
   beauty.py     soundness gate + beauty scoring  <-- the heart of the project
   analyze.py    high-level analysis API (eval, MultiPV, best vs beautiful)
   selfplay.py   self-play game generation (reward shaping)
-  train.py      training loop with checkpointing + progressive simulations
+  train.py      training loop with checkpointing (flat MCTS sims on GPU preset)
   config.py     all tunables in one place
 uci/uci_engine.py   UCI front-end
 server/app.py       FastAPI /analyze backend + serves the GUI
@@ -83,7 +83,7 @@ Options: `Simulations` (search budget/move), `Beauty` (play beautiful vs best), 
 
 - **Strength**: a *light* model trained via *pure self-play* on free hardware lands around club-amateur level — this is a fun, characterful analysis tool, not a Stockfish/Leela rival. Strength comes from model + data scale, which we deliberately trade away for speed and style.
 - **Tunable spice**: `engine/config.py -> BeautyConfig.soundness_window` is the main "how risky" dial. Wider window = more spectacular but slightly less sound; narrower = safer.
-- **Research baked in**: Gumbel "completed-Q" improved policy (sample-efficient at low simulation counts) and MiniZero-style progressive simulations (start cheap, ramp up) help self-play actually improve within a free Colab budget. Draw-contempt nudges toward decisive, beautiful games.
+- **Research baked in**: Gumbel "completed-Q" improved policy (sample-efficient at low simulation counts) and mild draw-contempt shaping help self-play improve within a free Colab budget. The GPU preset uses flat 100 MCTS sims/move with strength gates every 20 iterations.
 
 ## Relevant research
 

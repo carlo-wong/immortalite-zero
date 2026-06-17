@@ -34,6 +34,8 @@ _cfg = Config()
 # trained weights automatically.
 _repo_root = pathlib.Path(__file__).resolve().parent.parent
 _default_checkpoint_candidates = (
+    _repo_root / "checkpoints" / "latest.pt",
+    _repo_root / "results" / "immortalite_checkpoints_v3" / "latest.pt",
     _repo_root / "results" / "immortalite_zero_checkpoints" / "latest.pt",
     _repo_root / "results" / "immortalite_checkpoints_v2" / "latest.pt",
 )

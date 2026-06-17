@@ -41,22 +41,24 @@ Press **Shift+Enter** on each cell, or **Runtime → Run all**. Here's what each
 |------|--------------|
 | 1 | Clones the repo (and `git pull`s the latest each time you re-run). |
 | 2 | Installs `python-chess` (PyTorch is already on Colab). |
-| 3 | **Mounts Google Drive** — a popup asks you to authorize. Checkpoints save to `MyDrive/immortalite_zero_checkpoints`. |
-| 4 | Confirms the GPU is available (should print a Tesla T4 or similar). |
-| 5 | **Trains.** This is the long one — it prints a line per iteration with the losses. |
-| 6 | Plots the loss curves so you can see it learning. Run it anytime. |
+| 3 | Mounts Drive → `MyDrive/immortalite_zero_checkpoints_v3` (fresh run; bump `RUN_TAG` in cell 3 for another clean slate). |
+| 4 | Confirms GPU + sets `--gpu` preset. |
+| 5 | Downloads Syzygy tablebases (local Colab disk). |
+| 6 | **Config + train** — flat 100 sims, gates every 20 iters. `resume: False` (fresh start from iter 0). |
+| 7 | Optional manual gate between any two checkpoints (same sims/Syzygy as training). |
+| 8 | Plots metrics + gate winrates. |
 
 ## Step 4 — Know what "good" looks like
 
 Each training line looks like:
 
 ```
-iter  12 | sims  90 | games 40 | samples 3210 | buffer 40000 | policy_loss 1.85 | value_loss 0.21 | 95.3s
+iter  12 | sims 100 | games 64 | samples 5200 | buffer 40000 | policy_loss 1.85 | value_loss 0.21 | 180.0s
 ```
 
 - **policy_loss** should trend **down** over time (the net is learning which moves matter).
 - **value_loss** should be meaningful (not ~0) — that means games have real win/loss outcomes, not just timeouts.
-- The **loss plot** (cell 6) is the clearest signal: a downward curve = it's improving.
+- The **metrics plot** (cell 8) is the clearest signal: a downward loss curve = it's improving.
 
 Strength emerges slowly. Pure self-play on a free GPU is a club-level engine at
 best — the goal here is steady improvement, not Stockfish.
@@ -66,13 +68,16 @@ best — the goal here is steady improvement, not Stockfish.
 Free Colab disconnects after a while (idle, or ~12h max). **This is fine:**
 
 - Checkpoints are saved to **Google Drive every iteration**, so you never lose more than one iteration.
-- To resume: just **re-run all the cells**. Cell 5 automatically detects the
-  existing `latest.pt` in Drive and continues from there (the iteration count carries over).
 
-**Checkpoint history:** every iteration overwrites `latest.pt` (used for resume).
+| Goal | What to do |
+|------|------------|
+| **Resume** the same run | Set `resume: True` in cell 6 and re-run from cell 6 (or all cells). Training continues from `latest.pt` in the current `CKPT_DIR`. |
+| **Fresh run** (clean slate) | Bump `RUN_TAG` in cell 3 (e.g. `v4`) so metrics and checkpoints start at iter 0. Leave `resume: False`. |
+
+**Checkpoint history:**
 In addition, a numbered snapshot `ckpt_iter_0000.pt`, `ckpt_iter_0005.pt`, ... is
-kept every 5 iterations so you can compare or roll back to earlier versions.
-Change the interval with `--save-every N` in cell 5 (`--save-every 0` disables it).
+kept every 10 iterations so you can compare or roll back to earlier versions.
+Change the interval with `save_every` in cell 6 (`0` disables numbered snapshots).
 
 Tips to stay connected longer: keep the browser tab open and interact
 occasionally; don't close your laptop lid.
@@ -91,9 +96,15 @@ Then in Colab just **re-run cell 1** (it does `git pull`) and continue training.
 
 ## Step 7 — Use the trained engine locally
 
-1. In Google Drive, open `immortalite_zero_checkpoints` and **download `latest.pt`**.
+1. In Google Drive, open `immortalite_zero_checkpoints_v3` (or your current `RUN_TAG` folder) and **download `latest.pt`**.
 2. Put it in your local `checkpoints/` folder (or anywhere).
-3. Start the analysis server pointing at it:
+3. Verify encoding compatibility before starting the server:
+
+```bash
+python -m engine.inspect_encoding checkpoints/latest.pt
+```
+
+4. Start the analysis server pointing at it:
 
 ```bash
 # Windows (PowerShell)
@@ -101,7 +112,7 @@ $env:IMMORTALITE_ZERO_CHECKPOINT="checkpoints\latest.pt"
 python -m uvicorn server.app:app --port 8000
 ```
 
-4. Open **http://localhost:8000/app/** and analyze.
+5. Open **http://localhost:8000/app/** and analyze.
 
 > Re-download `latest.pt` and restart the server whenever you want the newest
 > trained weights.
