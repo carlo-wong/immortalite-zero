@@ -279,9 +279,8 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
 
     match_cfg = deepcopy(cfg)
     match_cfg.beauty.enabled = False
-    # Align gate search contempt with self-play (draw_penalty), not 0.0 — keeps
-    # eval matches consistent with training rather than biasing toward draws.
-    match_cfg.mcts.draw_contempt = match_cfg.train.draw_penalty
+    # Strength gates use normal chess: draws score 0.5, search treats draws as 0.
+    match_cfg.mcts.draw_contempt = 0.0
     # Disable resignation during strength evaluation matches
     match_cfg.train.resign_threshold = -1.1
     match_cfg.train.resign_plies = 0

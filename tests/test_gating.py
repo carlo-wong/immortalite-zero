@@ -186,17 +186,17 @@ def test_play_match_passes_tablebase_when_configured() -> None:
     assert recorded[0]["kwargs"]["tablebase"] is mock_tb
 
 
-def test_play_match_aligns_draw_contempt_with_draw_penalty() -> None:
+def test_play_match_uses_zero_draw_contempt_for_normal_chess_gates() -> None:
     recorded: list[dict] = []
     net_a, net_b, cfg = _tiny_nets()
-    cfg.train.draw_penalty = 0.25
-    cfg.mcts.draw_contempt = 0.0
+    cfg.train.draw_penalty = 1 / 3
+    cfg.mcts.draw_contempt = 1 / 3
 
     with patch("engine.train.play_game_gen", side_effect=_make_fake_play_game_gen(recorded)):
         play_match(net_a, net_b, cfg, n_games=1, sims=2, device="cpu")
 
     assert len(recorded) == 1
-    assert recorded[0]["cfg"].mcts.draw_contempt == pytest.approx(cfg.train.draw_penalty)
+    assert recorded[0]["cfg"].mcts.draw_contempt == pytest.approx(0.0)
 
 
 def test_snapshot_at_iter_returns_path_when_present() -> None:

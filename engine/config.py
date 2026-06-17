@@ -22,8 +22,9 @@ class MCTSConfig:
     # Gumbel completed-Q policy-target scaling.
     gumbel_c_visit: float = 50.0
     gumbel_c_scale: float = 1.0
-    # Search contempt: root treats draw terminals as slightly worse than 0.
-    draw_contempt: float = 0.03
+    # Search contempt during self-play/analysis: draw terminals penalized in search.
+    # Gates override this to 0 for normal W/D/L strength metrics.
+    draw_contempt: float = 1 / 3
     # claim_draw=True catches threefold/50-move draws inside search, but is
     # a bit more expensive than plain terminal checks.
     claim_draw: bool = True
@@ -59,8 +60,8 @@ class TrainConfig:
     max_game_moves: int = 200
     syzygy_path: str | None = None
     tb_max_pieces: int = 5
-    # Reward shaping: mild draw aversion (literature ~0–0.03 at this scale).
-    draw_penalty: float = 0.03
+    # Football 3-1-0 shaping: draw target = -1/3 (draw worth ~one-third of a win).
+    draw_penalty: float = 1 / 3
     # Optional self-play resignation. Disabled by default.
     resign_threshold: float = -1.1  # enable with value in [-1, 1]
     resign_plies: int = 0            # consecutive plies below threshold before resign
