@@ -41,10 +41,10 @@ Press **Shift+Enter** on each cell, or **Runtime → Run all**. Here's what each
 |------|--------------|
 | 1 | Clones the repo (and `git pull`s the latest each time you re-run). |
 | 2 | Installs `python-chess` (PyTorch is already on Colab). |
-| 3 | Mounts Drive → `MyDrive/immortalite_zero_checkpoints_v3` (fresh run; bump `RUN_TAG` in cell 3 for another clean slate). |
+| 3 | Mounts Drive → `MyDrive/immortalite_zero_checkpoints`. |
 | 4 | Confirms GPU + sets `--gpu` preset. |
 | 5 | Downloads Syzygy tablebases (local Colab disk). |
-| 6 | **Config + train** — flat 100 sims, gates every 20 iters. `resume: False` (fresh start from iter 0). |
+| 6 | **Config + train** — flat 100 sims, gates every 20 iters. `resume: True` by default (auto-continues after disconnect). |
 | 7 | Optional manual gate between any two checkpoints (same sims/Syzygy as training). |
 | 8 | Plots metrics + gate winrates. |
 
@@ -71,8 +71,8 @@ Free Colab disconnects after a while (idle, or ~12h max). **This is fine:**
 
 | Goal | What to do |
 |------|------------|
-| **Resume** the same run | Set `resume: True` in cell 6 and re-run from cell 6 (or all cells). Training continues from `latest.pt` in the current `CKPT_DIR`. |
-| **Fresh run** (clean slate) | Bump `RUN_TAG` in cell 3 (e.g. `v4`) so metrics and checkpoints start at iter 0. Leave `resume: False`. |
+| **Resume** after disconnect | Re-run cells 1→6 (default). `resume: True` loads `latest.pt` automatically. |
+| **Fresh run** (clean slate) | Empty the Drive checkpoint folder, then re-run cells 1→6. Starts at iter 0 when no `latest.pt` exists. |
 
 **Checkpoint history:**
 In addition, a numbered snapshot `ckpt_iter_0000.pt`, `ckpt_iter_0005.pt`, ... is
@@ -96,7 +96,7 @@ Then in Colab just **re-run cell 1** (it does `git pull`) and continue training.
 
 ## Step 7 — Use the trained engine locally
 
-1. In Google Drive, open `immortalite_zero_checkpoints_v3` (or your current `RUN_TAG` folder) and **download `latest.pt`**.
+1. In Google Drive, open `immortalite_zero_checkpoints` and **download `latest.pt`**.
 2. Put it in your local `checkpoints/` folder (or anywhere).
 3. Verify encoding compatibility before starting the server:
 
