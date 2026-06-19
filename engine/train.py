@@ -281,6 +281,8 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     match_cfg.beauty.enabled = False
     # Strength gates use normal chess: draws score 0.5, search treats draws as 0.
     match_cfg.mcts.draw_contempt = 0.0
+    # No artificial ply cap — Syzygy, 50-move, threefold, etc. end games naturally.
+    match_cfg.train.max_game_moves = 10_000
     # Disable resignation during strength evaluation matches
     match_cfg.train.resign_threshold = -1.1
     match_cfg.train.resign_plies = 0

@@ -199,6 +199,18 @@ def test_play_match_uses_zero_draw_contempt_for_normal_chess_gates() -> None:
     assert recorded[0]["cfg"].mcts.draw_contempt == pytest.approx(0.0)
 
 
+def test_play_match_uncaps_max_game_moves_for_gates() -> None:
+    recorded: list[dict] = []
+    net_a, net_b, cfg = _tiny_nets()
+    cfg.train.max_game_moves = 200
+
+    with patch("engine.train.play_game_gen", side_effect=_make_fake_play_game_gen(recorded)):
+        play_match(net_a, net_b, cfg, n_games=1, sims=2, device="cpu")
+
+    assert len(recorded) == 1
+    assert recorded[0]["cfg"].train.max_game_moves == 10_000
+
+
 def test_snapshot_at_iter_returns_path_when_present() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         snap_path = os.path.join(tmpdir, "ckpt_iter_0010.pt")
