@@ -10,7 +10,6 @@ import chess
 import numpy as np
 import torch
 
-from .beauty import compute_beauty, select_beautiful_move
 from .config import Config, NetConfig
 from .encoding import ENCODING_VERSION
 from .mcts import MCTS, SearchResult
@@ -65,9 +64,6 @@ class Analysis:
     eval_cp: int               # from side-to-move perspective
     win_prob: float            # side-to-move perspective, [0, 1]
     best_move: str | None
-    beautiful_move: str | None
-    beauty_cost_cp: int        # eval given up by playing the beautiful move
-    beauty: dict | None
     lines: list[dict]          # top-N candidate lines (MultiPV)
 
 
@@ -78,11 +74,11 @@ class Analyzer:
         self.evaluator = load_evaluator(checkpoint_path, self.cfg, device)
         self.mcts = MCTS(self.evaluator, self.cfg.mcts)
 
-    def analyze(self, board: chess.Board, multipv: int = 3,
+    def analyze(self, board: chess.Board, multipv: int = 5,
                 simulations: int | None = None) -> Analysis:
         if board.is_game_over(claim_draw=self.cfg.mcts.claim_draw):
             return Analysis(board.fen(), value_to_cp(self.mcts._terminal_value(board)),
-                            0.0, None, None, 0, None, [])
+                            0.0, None, [])
 
         result = self.mcts.run(board, simulations=simulations, add_noise=False)
         order = np.argsort(-result.visits)  # most-visited first
@@ -97,20 +93,11 @@ class Analyzer:
         best_q = float(result.q_values.max())
         best_move = result.best_move()
 
-        beautiful_move, breakdown = select_beautiful_move(board, result, self.cfg.beauty)
-        # cost = eval difference between best and beautiful choice
-        beautiful_idx = result.moves.index(beautiful_move)
-        beautiful_q = float(result.q_values[beautiful_idx])
-        beauty_cost = value_to_cp(best_q) - value_to_cp(beautiful_q)
-
         return Analysis(
             fen=board.fen(),
             eval_cp=value_to_cp(best_q),
             win_prob=(best_q + 1) / 2,
             best_move=best_move.uci(),
-            beautiful_move=beautiful_move.uci(),
-            beauty_cost_cp=max(0, beauty_cost),
-            beauty=asdict(breakdown) if breakdown else None,
             lines=[asdict(line) for line in lines],
         )
 

@@ -43,7 +43,7 @@ Press **Shift+Enter** on each cell, or **Runtime → Run all**. Here's what each
 | 2 | Installs `python-chess` (PyTorch is already on Colab). |
 | 3 | Mounts Drive → `MyDrive/immortalite_zero_checkpoints`. |
 | 4 | Confirms GPU + sets `--gpu` preset. |
-| 5 | Downloads Syzygy tablebases (local Colab disk). |
+| 5 | Syzygy tablebases: copies from `CKPT_DIR/syzygy345/` on Drive if present, else downloads once and caches there. |
 | 6 | **Config + train** — flat 100 sims, gates every 20 iters. `resume: True` by default (auto-continues after disconnect). |
 | 7 | Optional manual gate between any two checkpoints (same sims/Syzygy as training). |
 | 8 | Plots metrics + gate winrates. |

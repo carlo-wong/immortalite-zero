@@ -33,7 +33,7 @@ class MCTSConfig:
 @dataclass
 class BeautyConfig:
     """Beauty-bias selector. 'balanced': prefer beauty unless it clearly loses."""
-    enabled: bool = True
+    enabled: bool = False
     # Soundness window in win-probability units [0,1]. Moves within this of the
     # best move are considered "sound enough" to be eligible for beauty bias.
     soundness_window: float = 0.05

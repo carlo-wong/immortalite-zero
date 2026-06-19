@@ -8,14 +8,16 @@
   :root {
     --bg: #161512; --panel: #262421; --light: #f0d9b5; --dark: #b58863;
     --accent: #759900; --text: #bababa; --text-bright: #e8e6e3;
-    --best: #3692e7; --beautiful: #e0a000;
+    --best: #3692e7;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font-family: "Segoe UI", system-ui, sans-serif;
-    display: flex; justify-content: center; padding: 24px; gap: 20px;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 24px; gap: 12px; min-height: 100vh;
   }
+  .main { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
   h1 { font-size: 18px; color: var(--text-bright); margin: 0 0 12px; font-weight: 600; }
   .left { display: flex; gap: 10px; }
   .evalbar {
@@ -27,127 +29,281 @@
     position: absolute; width: 100%; text-align: center; font-size: 10px;
     color: #111; top: 4px; font-weight: 700; z-index: 2;
   }
-  .board-wrap { position: relative; width: 480px; height: 480px; }
+  .evalbar.untrained .white { opacity: 0.55; }
+  .board-wrap { position: relative; width: 480px; height: 480px; touch-action: none; }
   .board { display: grid; grid-template-columns: repeat(8, 60px); grid-template-rows: repeat(8, 60px); }
-  .sq { width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;
-        font-size: 44px; cursor: pointer; user-select: none; position: relative; }
+  .sq {
+    width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;
+    font-size: 44px; cursor: pointer; user-select: none; position: relative;
+  }
   .sq.light { background: var(--light); } .sq.dark { background: var(--dark); }
   .sq.sel { box-shadow: inset 0 0 0 4px rgba(155,199,0,.8); }
-  .sq.dest::after { content: ""; position: absolute; width: 20px; height: 20px;
-        background: rgba(20,85,30,.35); border-radius: 50%; }
-  .sq .coord { position: absolute; font-size: 9px; bottom: 1px; right: 2px; color: rgba(0,0,0,.4); }
+  .sq.last-move { background-color: rgba(155,199,0,.35) !important; }
+  .sq.in-check { box-shadow: inset 0 0 0 4px rgba(255,0,0,.65); }
+  .sq.dest:not(.dest-capture)::after {
+    content: ""; position: absolute; width: 20px; height: 20px;
+    background: var(--accent); opacity: 0.45; border-radius: 50%;
+    pointer-events: none; z-index: 1;
+  }
+  .sq.dest-capture::after {
+    content: ""; position: absolute; top: 50%; left: 50%;
+    width: 48px; height: 48px; transform: translate(-50%, -50%);
+    border-radius: 50%; background: transparent;
+    box-shadow: 0 0 0 5px rgba(117, 153, 0, 0.55);
+    pointer-events: none; z-index: 1;
+  }
+  .sq.dest-capture .piece { position: relative; z-index: 2; }
+  .sq .coord { position: absolute; font-size: 9px; pointer-events: none; }
+  .sq.light .coord { color: rgba(0,0,0,.45); }
+  .sq.dark .coord { color: rgba(255,255,255,.5); }
+  .sq .coord.file { bottom: 1px; right: 2px; }
+  .sq .coord.rank { top: 1px; left: 2px; }
+  .piece { cursor: grab; touch-action: none; }
+  .piece:active { cursor: grabbing; }
+  .piece.dragging { opacity: 0; }
   .piece.w { color: #fff; text-shadow: 0 0 2px #000, 0 1px 2px #000; }
   .piece.b { color: #000; text-shadow: 0 0 1px #888; }
+  .drag-ghost {
+    position: fixed; pointer-events: none; z-index: 200;
+    font-size: 52px; line-height: 1;
+    transform: translate(-50%, calc(-50% - 6px));
+    filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.45));
+    cursor: grabbing; user-select: none;
+  }
+  .drag-ghost.w { color: #fff; text-shadow: 0 0 2px #000, 0 1px 2px #000; }
+  .drag-ghost.b { color: #000; text-shadow: 0 0 1px #888; }
   svg.arrows { position: absolute; top: 0; left: 0; width: 480px; height: 480px; pointer-events: none; }
   .panel { background: var(--panel); border-radius: 6px; padding: 16px; width: 320px; }
   .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
   button { background: var(--accent); color: #fff; border: none; padding: 7px 12px;
         border-radius: 4px; cursor: pointer; font-size: 13px; }
   button.secondary { background: #3a3835; }
+  button.active-style { outline: 2px solid var(--accent); }
   textarea, input[type=text] { width: 100%; background: #1b1a17; color: var(--text-bright);
         border: 1px solid #3a3835; border-radius: 4px; padding: 6px; font-family: monospace; font-size: 12px; }
   label { font-size: 12px; }
-  .eval-line { padding: 7px 8px; border-radius: 4px; background: #1f1e1b; margin-bottom: 6px; font-size: 13px; }
+  .eval-line {
+    padding: 7px 8px; border-radius: 4px; background: #1f1e1b; margin-bottom: 6px;
+    font-size: 13px; cursor: pointer; transition: background .15s;
+  }
+  .eval-line:hover { background: #2a2926; }
+  .eval-line.selected { outline: 1px solid var(--accent); }
+  .eval-line.dim { opacity: 0.45; }
   .eval-line .mv { color: var(--text-bright); font-weight: 600; font-family: monospace; }
   .eval-line .cp { float: right; font-family: monospace; }
   .eval-line .pv { display: block; color: #8c8c8c; font-size: 11px; font-family: monospace; margin-top: 2px;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .beauty-card { background: #2c2614; border: 1px solid #4a3d12; border-radius: 4px;
-        padding: 8px; margin: 8px 0; font-size: 12px; }
-  .beauty-card b { color: var(--beautiful); }
   .moves { font-family: monospace; font-size: 13px; line-height: 1.7; max-height: 120px; overflow-y: auto; }
   .moves .m { cursor: pointer; padding: 0 3px; border-radius: 3px; }
   .moves .m.active { background: var(--accent); color: #fff; }
   .legend { font-size: 11px; margin-top: 6px; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin: 0 4px 0 10px; }
   .status { font-size: 11px; color: #888; margin-top: 8px; min-height: 14px; }
+  .footer {
+    font-size: 11px; color: #666; text-align: center; max-width: 860px; line-height: 1.5;
+  }
   h2 { font-size: 13px; color: var(--text-bright); margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .5px; }
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    align-items: center; justify-content: center; z-index: 100; pointer-events: none;
+  }
+  .modal-backdrop.open { display: flex; pointer-events: auto; }
+  .modal {
+    background: var(--panel); border-radius: 8px; padding: 16px 20px; text-align: center;
+  }
+  .modal h3 { margin: 0 0 12px; color: var(--text-bright); font-size: 14px; }
+  .promo-btns { display: flex; gap: 10px; justify-content: center; }
+  .promo-btns button { font-size: 28px; min-width: 52px; padding: 8px; }
 </style>
 </head>
 <body>
-  <div class="left">
-    <div class="evalbar"><div class="num" id="evalNum">0.0</div><div class="white" id="evalWhite" style="height:50%"></div></div>
-    <div class="board-wrap">
-      <div class="board" id="board"></div>
-      <svg class="arrows" id="arrows" viewBox="0 0 480 480"></svg>
+  <div class="main">
+    <div class="left">
+      <div class="evalbar" id="evalBar"><div class="num" id="evalNum">0.0</div><div class="white" id="evalWhite" style="height:50%"></div></div>
+      <div class="board-wrap" id="boardWrap">
+        <div class="board" id="board"></div>
+        <svg class="arrows" id="arrows" viewBox="0 0 480 480"></svg>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h1>Immortalite Zero — Analysis</h1>
+      <div class="row">
+        <button id="flip" class="secondary" title="Flip board (F)">Flip</button>
+        <button id="reset" class="secondary">Start pos</button>
+        <button id="prev" class="secondary" title="Previous move (←)">◀</button>
+        <button id="next" class="secondary" title="Next move (→)">▶</button>
+      </div>
+      <div class="row">
+        <label>Sims <input type="text" id="sims" value="200" style="width:50px" /></label>
+        <button id="analyze" title="Analyze (A)">Analyze</button>
+      </div>
+
+      <h2>Candidate lines</h2>
+      <div id="lines"></div>
+      <div class="legend">
+        <span class="dot" style="background:var(--best)"></span>best
+      </div>
+
+      <h2>Moves</h2>
+      <div class="moves" id="moves"></div>
+
+      <h2>Import PGN / FEN</h2>
+      <textarea id="importBox" rows="3" placeholder="Paste a PGN game or a FEN string..."></textarea>
+      <div class="row" style="margin-top:6px">
+        <button id="loadBtn">Load</button>
+      </div>
+
+      <h2>Live PGN / FEN</h2>
+      <textarea id="pgnOut" rows="3" readonly></textarea>
+      <div class="row" style="margin-top:6px">
+        <input type="text" id="fenOut" readonly />
+      </div>
+      <div class="status" id="status"></div>
     </div>
   </div>
 
-  <div class="panel">
-    <h1>Immortalite Zero — Analysis</h1>
-    <div class="row">
-      <button id="flip" class="secondary">Flip</button>
-      <button id="reset" class="secondary">Start pos</button>
-      <button id="prev" class="secondary">◀</button>
-      <button id="next" class="secondary">▶</button>
-    </div>
-    <div class="row">
-      <label><input type="checkbox" id="beauty" checked /> Beauty bias</label>
-      <label>Sims <input type="text" id="sims" value="200" style="width:50px" /></label>
-      <button id="analyze">Analyze</button>
-    </div>
+  <div class="footer" id="footer">Connecting…</div>
 
-    <h2>Candidate lines</h2>
-    <div id="lines"></div>
-    <div class="beauty-card" id="beautyCard" style="display:none"></div>
-    <div class="legend">
-      <span class="dot" style="background:var(--best)"></span>best
-      <span class="dot" style="background:var(--beautiful)"></span>beautiful
+  <div class="modal-backdrop" id="promoModal">
+    <div class="modal">
+      <h3>Promote to</h3>
+      <div class="promo-btns" id="promoBtns"></div>
     </div>
-
-    <h2>Moves</h2>
-    <div class="moves" id="moves"></div>
-
-    <h2>Import PGN / FEN</h2>
-    <textarea id="importBox" rows="3" placeholder="Paste a PGN game or a FEN string..."></textarea>
-    <div class="row" style="margin-top:6px">
-      <button id="loadBtn">Load</button>
-    </div>
-
-    <h2>Live PGN / FEN</h2>
-    <textarea id="pgnOut" rows="3" readonly></textarea>
-    <div class="row" style="margin-top:6px">
-      <input type="text" id="fenOut" readonly />
-    </div>
-    <div class="status" id="status"></div>
   </div>
 
 <script type="module">
-import { Chess } from "https://esm.sh/chess.js@1.0.0-beta.8";
+import { Chess } from "./chess.js";
 
-const API = "http://localhost:8000/analyze";
+const API = "/analyze";
+const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const UNICODE = { p:"♟", n:"♞", b:"♝", r:"♜", q:"♛", k:"♚" };
+const ANALYZE_DEBOUNCE_MS = 350;
 
 let game = new Chess();
-let history = [];      // list of FENs for navigation
-let ply = 0;           // current index into history
+let startFen = START_FEN;
+let allMoves = [];
+let ply = 0;
 let orientation = "w";
 let selected = null;
 let lastAnalysis = null;
+let analyzeSeq = 0;
+let analyzeTimer = null;
+let selectedLineIdx = 0;
+let lastMove = null;
+let dragFrom = null;
+let dragMoved = false;
+let dragGhost = null;
+let serverHealth = null;
+let pendingPromo = null;
 
 const $ = id => document.getElementById(id);
 
-function pushState() {
-  history = history.slice(0, ply + 1);
-  history.push(game.fen());
-  ply = history.length - 1;
+function isLivePosition() { return ply === allMoves.length; }
+
+function rebuildGame() {
+  game = new Chess();
+  if (startFen !== START_FEN) game.load(startFen);
+  for (let i = 0; i < ply; i++) game.move(allMoves[i]);
 }
 
-function init() {
-  history = [game.fen()]; ply = 0;
-  render(); analyze();
+function pushMove(san) {
+  allMoves = allMoves.slice(0, ply);
+  allMoves.push(san);
+  ply = allMoves.length;
+  rebuildGame();
+}
+
+function initFromStart() {
+  startFen = START_FEN;
+  allMoves = [];
+  ply = 0;
+  game = new Chess();
+  selected = null;
+  lastMove = null;
+  lastAnalysis = null;
+  selectedLineIdx = 0;
+  render();
+  scheduleAnalyze();
+}
+
+function loadFromChess(temp) {
+  const hdr = temp.header();
+  startFen = hdr.FEN || START_FEN;
+  allMoves = temp.history();
+  ply = allMoves.length;
+  selected = null;
+  lastMove = ply > 0 ? { san: allMoves[ply - 1] } : null;
+  lastAnalysis = null;
+  selectedLineIdx = 0;
+  rebuildGame();
+  render();
+  scheduleAnalyze();
+}
+
+function parseImport(text) {
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error("empty");
+
+  const fenLike = /^([rnbqkpRNBQKP1-8]+\/[rnbqkpRNBQKP1-8\/]+\s+[wb]\s+[KQkq-]+\s+[a-h3-6-]+\s+\d+\s+\d+)/;
+  const firstLine = trimmed.split(/\r?\n/).find(l => l.trim() && !/^\[/.test(l.trim()))?.trim() || trimmed;
+  if (fenLike.test(firstLine) && !/\d\.\s/.test(trimmed)) {
+    const g = new Chess();
+    g.load(firstLine);
+    startFen = g.fen();
+    allMoves = [];
+    ply = 0;
+    selected = null;
+    lastMove = null;
+    lastAnalysis = null;
+    selectedLineIdx = 0;
+    rebuildGame();
+    render();
+    scheduleAnalyze();
+    return;
+  }
+
+  const g = new Chess();
+  g.loadPgn(trimmed);
+  loadFromChess(g);
 }
 
 function squareName(fileIdx, rankIdx) {
-  // fileIdx,rankIdx are screen coords (0..7 left->right, top->bottom)
   const file = orientation === "w" ? fileIdx : 7 - fileIdx;
   const rank = orientation === "w" ? 7 - rankIdx : rankIdx;
   return "abcdefgh"[file] + (rank + 1);
 }
 
+function moveSquares(san) {
+  const g = new Chess();
+  if (startFen !== START_FEN) g.load(startFen);
+  for (let i = 0; i < ply - 1; i++) g.move(allMoves[i]);
+  const mv = g.move(san);
+  return mv ? { from: mv.from, to: mv.to } : null;
+}
+
 function render() {
-  const board = $("board"); board.innerHTML = "";
-  const pos = game.board(); // [rank8..rank1][file a..h]
+  const board = $("board");
+  board.innerHTML = "";
+  const pos = game.board();
+  let checkSq = null;
+  if (game.inCheck()) {
+    const b = game.board();
+    const turn = game.turn();
+    for (let ri = 0; ri < 8; ri++) {
+      for (let fi = 0; fi < 8; fi++) {
+        const p = b[ri][fi];
+        if (p && p.type === "k" && p.color === turn) {
+          const rank = 8 - ri;
+          checkSq = "abcdefgh"[fi] + rank;
+          break;
+        }
+      }
+      if (checkSq) break;
+    }
+  }
+  const lastSq = lastMove && ply > 0 ? moveSquares(allMoves[ply - 1]) : null;
+
   for (let r = 0; r < 8; r++) {
     for (let f = 0; f < 8; f++) {
       const sq = document.createElement("div");
@@ -157,121 +313,293 @@ function render() {
       const isLight = (fileIdx + rankIdx) % 2 === 1;
       sq.className = "sq " + (isLight ? "light" : "dark");
       sq.dataset.square = name;
-      // pos is rank-8-first (pos[0] = rank 8); rankIdx is 0-based chess rank.
+      if (lastSq && (name === lastSq.from || name === lastSq.to)) sq.classList.add("last-move");
+      if (name === checkSq) sq.classList.add("in-check");
+
       const piece = pos[7 - rankIdx][fileIdx];
       if (piece) {
         const span = document.createElement("span");
-        span.className = "piece " + piece.color;
+        span.className = "piece " + piece.color + (dragFrom === name ? " dragging" : "");
         span.textContent = UNICODE[piece.type];
+        span.dataset.square = name;
         sq.appendChild(span);
       }
-      if (selected === name) sq.classList.add("sel");
-      if (selected) {
-        const legal = game.moves({ square: selected, verbose: true });
-        if (legal.some(m => m.to === name)) sq.classList.add("dest");
+
+      if (f === 0) {
+        const rankCoord = document.createElement("span");
+        rankCoord.className = "coord rank";
+        rankCoord.textContent = String(orientation === "w" ? 8 - r : r + 1);
+        sq.appendChild(rankCoord);
       }
+      if (r === 7) {
+        const fileCoord = document.createElement("span");
+        fileCoord.className = "coord file";
+        fileCoord.textContent = "abcdefgh"[orientation === "w" ? f : 7 - f];
+        sq.appendChild(fileCoord);
+      }
+
+      if (selected === name) sq.classList.add("sel");
+      const active = selected || dragFrom;
+      if (active && isLivePosition()) {
+        const legal = game.moves({ square: active, verbose: true });
+        const mv = legal.find(m => m.to === name);
+        if (mv) {
+          sq.classList.add("dest");
+          if (mv.captured) sq.classList.add("dest-capture");
+        }
+      }
+
+      sq.onmousedown = e => onSquareDown(name, e);
       sq.onclick = () => onSquareClick(name);
       board.appendChild(sq);
     }
   }
+
+  updateSelectionHighlight();
+
   $("fenOut").value = game.fen();
-  $("pgnOut").value = game.pgn();
+  $("pgnOut").value = buildPgn();
   renderMoves();
   drawArrows();
+  updateGameOverUi();
+}
+
+function buildPgn() {
+  if (allMoves.length === 0 && startFen === START_FEN) return game.pgn();
+  const g = new Chess();
+  if (startFen !== START_FEN) g.load(startFen);
+  for (const san of allMoves) g.move(san);
+  return g.pgn();
+}
+
+function updateSelectionHighlight() {
+  const active = selected || dragFrom;
+  document.querySelectorAll("#board .sq").forEach(sq => {
+    const name = sq.dataset.square;
+    sq.classList.remove("sel", "dest", "dest-capture");
+    if (selected === name) sq.classList.add("sel");
+    if (active && isLivePosition()) {
+      const legal = game.moves({ square: active, verbose: true });
+      const mv = legal.find(m => m.to === name);
+      if (mv) {
+        sq.classList.add("dest");
+        if (mv.captured) sq.classList.add("dest-capture");
+      }
+    }
+    const pieceSpan = sq.querySelector(".piece");
+    if (pieceSpan) pieceSpan.classList.toggle("dragging", dragFrom === name);
+  });
+}
+
+function createDragGhost(piece, x, y) {
+  removeDragGhost();
+  dragGhost = document.createElement("span");
+  dragGhost.className = "drag-ghost " + piece.color;
+  dragGhost.textContent = UNICODE[piece.type];
+  dragGhost.style.left = x + "px";
+  dragGhost.style.top = y + "px";
+  document.body.appendChild(dragGhost);
+}
+
+function removeDragGhost() {
+  if (dragGhost) {
+    dragGhost.remove();
+    dragGhost = null;
+  }
+}
+
+function onSquareDown(name, e) {
+  if (!isLivePosition() || game.isGameOver()) return;
+  e.preventDefault();
+  const piece = game.get(name);
+  if (piece && piece.color === game.turn()) {
+    dragFrom = name;
+    dragMoved = false;
+    createDragGhost(piece, e.clientX, e.clientY);
+    updateSelectionHighlight();
+  }
+}
+
+function onDocumentMouseMove(e) {
+  if (!dragGhost) return;
+  dragGhost.style.left = e.clientX + "px";
+  dragGhost.style.top = e.clientY + "px";
+}
+
+function onDocumentMouseUp(e) {
+  removeDragGhost();
+  if (!dragFrom || !isLivePosition() || game.isGameOver()) {
+    dragFrom = null;
+    updateSelectionHighlight();
+    return;
+  }
+  const from = dragFrom;
+  dragFrom = null;
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const to = el?.closest?.(".sq[data-square]")?.dataset?.square;
+  if (to && to !== from) {
+    tryMove(from, to);
+    dragMoved = false;
+    return;
+  }
+  updateSelectionHighlight();
 }
 
 function onSquareClick(name) {
-  if (ply !== history.length - 1) return; // only move from the live position
-  const piece = game.get(name);
-  if (selected) {
-    const legal = game.moves({ square: selected, verbose: true });
-    const mv = legal.find(m => m.to === name);
-    if (mv) {
-      game.move({ from: selected, to: name, promotion: "q" });
-      selected = null; pushState(); render(); analyze(); return;
-    }
+  if (!isLivePosition() || game.isGameOver()) return;
+  if (dragMoved) { dragMoved = false; return; }
+  if (selected && selected !== name) {
+    tryMove(selected, name);
+    return;
   }
-  selected = piece && piece.color === game.turn() ? name : null;
+  const piece = game.get(name);
+  if (piece && piece.color === game.turn()) {
+    selected = selected === name ? null : name;
+  } else {
+    selected = null;
+  }
+  updateSelectionHighlight();
+}
+
+function tryMove(from, to, promotion) {
+  const legal = game.moves({ square: from, verbose: true });
+  const mv = legal.find(m => m.to === to);
+  if (!mv) { selected = null; render(); return; }
+  if (mv.promotion && !promotion) {
+    pendingPromo = { from, to };
+    showPromoModal(mv.promotion);
+    return;
+  }
+  const played = game.move({ from, to, promotion: promotion || mv.promotion || undefined });
+  if (!played) return;
+  selected = null;
+  lastMove = played;
+  pushMove(played.san);
   render();
+  scheduleAnalyze();
+}
+
+function showPromoModal(defaultPiece) {
+  const pieces = ["q", "r", "b", "n"];
+  const box = $("promoBtns");
+  box.innerHTML = "";
+  for (const p of pieces) {
+    const btn = document.createElement("button");
+    btn.textContent = UNICODE[p];
+    btn.className = "secondary";
+    btn.onclick = () => {
+      $("promoModal").classList.remove("open");
+      const { from, to } = pendingPromo;
+      pendingPromo = null;
+      tryMove(from, to, p);
+    };
+    box.appendChild(btn);
+  }
+  $("promoModal").classList.add("open");
 }
 
 function renderMoves() {
-  const box = $("moves"); box.innerHTML = "";
-  const hist = game.history();
-  for (let i = 0; i < hist.length; i++) {
-    if (i % 2 === 0) box.appendChild(document.createTextNode(`${i / 2 + 1}. `));
+  const box = $("moves");
+  box.innerHTML = "";
+  for (let i = 0; i < allMoves.length; i++) {
+    if (i % 2 === 0) box.appendChild(document.createTextNode(`${Math.floor(i / 2) + 1}. `));
     const span = document.createElement("span");
     span.className = "m" + (i + 1 === ply ? " active" : "");
-    span.textContent = hist[i] + " ";
-    span.onclick = () => { goTo(i + 1); };
+    span.textContent = allMoves[i] + " ";
+    span.onclick = () => goTo(i + 1);
     box.appendChild(span);
   }
 }
 
 function goTo(targetPly) {
-  targetPly = Math.max(0, Math.min(history.length - 1, targetPly));
-  const g = new Chess(); // rebuild from start to targetPly using stored fens
-  game.load(history[targetPly]);
-  ply = targetPly; selected = null; render(); analyze();
+  targetPly = Math.max(0, Math.min(allMoves.length, targetPly));
+  ply = targetPly;
+  selected = null;
+  dragFrom = null;
+  dragMoved = false;
+  removeDragGhost();
+  lastMove = ply > 0 ? { san: allMoves[ply - 1] } : null;
+  rebuildGame();
+  render();
+  scheduleAnalyze();
 }
 
 function squareToXY(sq) {
-  let file = "abcdefgh".indexOf(sq[0]);
-  let rank = parseInt(sq[1], 10) - 1;
+  const file = "abcdefgh".indexOf(sq[0]);
+  const rank = parseInt(sq[1], 10) - 1;
   const x = orientation === "w" ? file : 7 - file;
   const y = orientation === "w" ? 7 - rank : rank;
   return { cx: x * 60 + 30, cy: y * 60 + 30 };
 }
 
-function drawArrow(svg, from, to, color) {
+function drawArrow(svg, from, to, color, markerId, width = 8) {
   const a = squareToXY(from), b = squareToXY(to);
   const ns = "http://www.w3.org/2000/svg";
   const line = document.createElementNS(ns, "line");
   line.setAttribute("x1", a.cx); line.setAttribute("y1", a.cy);
   line.setAttribute("x2", b.cx); line.setAttribute("y2", b.cy);
-  line.setAttribute("stroke", color); line.setAttribute("stroke-width", "8");
-  line.setAttribute("stroke-linecap", "round"); line.setAttribute("opacity", "0.75");
-  line.setAttribute("marker-end", `url(#head-${color.replace('#','')})`);
+  line.setAttribute("stroke", color); line.setAttribute("stroke-width", String(width));
+  line.setAttribute("stroke-linecap", "round"); line.setAttribute("opacity", "0.8");
+  line.setAttribute("marker-end", `url(#${markerId})`);
   svg.appendChild(line);
 }
 
-function drawArrows() {
-  const svg = $("arrows"); svg.innerHTML = "";
-  if (!lastAnalysis || ply !== history.length - 1) return;
+function addMarker(svg, id, color) {
   const ns = "http://www.w3.org/2000/svg";
-  for (const c of ["#3692e7", "#e0a000"]) {
-    const m = document.createElementNS(ns, "marker");
-    m.setAttribute("id", `head-${c.replace('#','')}`); m.setAttribute("markerWidth", "4");
-    m.setAttribute("markerHeight", "4"); m.setAttribute("refX", "2"); m.setAttribute("refY", "2");
-    m.setAttribute("orient", "auto");
-    const p = document.createElementNS(ns, "path");
-    p.setAttribute("d", "M0,0 L4,2 L0,4 Z"); p.setAttribute("fill", c);
-    m.appendChild(p); svg.appendChild(m);
+  const m = document.createElementNS(ns, "marker");
+  m.setAttribute("id", id); m.setAttribute("markerWidth", "4");
+  m.setAttribute("markerHeight", "4"); m.setAttribute("refX", "2"); m.setAttribute("refY", "2");
+  m.setAttribute("orient", "auto");
+  const p = document.createElementNS(ns, "path");
+  p.setAttribute("d", "M0,0 L4,2 L0,4 Z"); p.setAttribute("fill", color);
+  m.appendChild(p); svg.appendChild(m);
+}
+
+function drawArrows() {
+  const svg = $("arrows");
+  svg.innerHTML = "";
+  if (!lastAnalysis || !isLivePosition() || game.isGameOver()) return;
+
+  addMarker(svg, "head-best", "#3692e7");
+  addMarker(svg, "head-line", "#88bb66");
+
+  const line = lastAnalysis.lines?.[selectedLineIdx];
+  if (line?.move) {
+    drawArrow(svg, line.move.slice(0, 2), line.move.slice(2, 4), "#88bb66", "head-line", 6);
   }
-  if (lastAnalysis.best_move) drawArrow(svg, lastAnalysis.best_move.slice(0,2), lastAnalysis.best_move.slice(2,4), "#3692e7");
-  if (lastAnalysis.beautiful_move && lastAnalysis.beautiful_move !== lastAnalysis.best_move)
-    drawArrow(svg, lastAnalysis.beautiful_move.slice(0,2), lastAnalysis.beautiful_move.slice(2,4), "#e0a000");
+
+  if (lastAnalysis.best_move) {
+    drawArrow(svg, lastAnalysis.best_move.slice(0, 2), lastAnalysis.best_move.slice(2, 4), "#3692e7", "head-best", 9);
+  }
 }
 
 function toWhiteCp(cp, turn) {
-  // Backend evals are side-to-move relative; flip so + is good for White.
   return turn === "w" ? cp : -cp;
 }
 
 function formatCp(cp) {
   const v = cp / 100;
+  if (Math.abs(v) >= 50) return (v > 0 ? "M" : "-M") + Math.round(Math.abs(v) / 100);
   return (v >= 0 ? "+" : "") + v.toFixed(2);
+}
+
+function fenTurn(fen) {
+  return fen?.split(" ")[1] || game.turn();
+}
+
+function setEvalBarPending() {
+  $("evalNum").textContent = "…";
 }
 
 function setEvalBar(cp, turn) {
   const white_cp = toWhiteCp(cp, turn);
-  const pct = 1 / (1 + Math.exp(-white_cp / 250)); // logistic squashing
+  const pct = 1 / (1 + Math.exp(-white_cp / 250));
   $("evalWhite").style.height = (pct * 100) + "%";
   $("evalNum").textContent = formatCp(white_cp);
+  $("evalBar").classList.toggle("untrained", !(serverHealth?.trained));
 }
 
 function uciToSan(fen, uci) {
-  // Convert a single UCI move (e.g. "e2e4", "e7e8q") to SAN at the given position.
   try {
     const g = new Chess(fen);
     const mv = g.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
@@ -280,7 +608,6 @@ function uciToSan(fen, uci) {
 }
 
 function uciLineToSan(fen, uciMoves) {
-  // Convert a sequence of UCI moves to SAN, replaying from the given position.
   try {
     const g = new Chess(fen);
     return uciMoves.map(u => {
@@ -290,72 +617,120 @@ function uciLineToSan(fen, uciMoves) {
   } catch { return uciMoves; }
 }
 
-function renderLines(a) {
-  const box = $("lines"); box.innerHTML = "";
-  const turn = a.fen.split(" ")[1];
-  for (const line of a.lines) {
-    const div = document.createElement("div"); div.className = "eval-line";
+function renderLines(a, analyzing) {
+  const box = $("lines");
+  box.innerHTML = "";
+  const turn = fenTurn(a?.fen);
+  const lines = a?.lines || [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const div = document.createElement("div");
+    div.className = "eval-line" + (i === selectedLineIdx ? " selected" : "") + (analyzing ? " dim" : "");
     const cp = formatCp(toWhiteCp(line.eval_cp, turn));
-    const moveSan = uciToSan(a.fen, line.move);
-    const pvSan = uciLineToSan(a.fen, line.pv).join(" ");
+    const moveSan = uciToSan(a?.fen || game.fen(), line.move);
+    const pvSan = uciLineToSan(a?.fen || game.fen(), line.pv).join(" ");
     div.innerHTML = `<span class="mv">${moveSan}</span><span class="cp">${cp}</span>
                      <span class="pv">${pvSan}</span>`;
+    div.onclick = () => { selectedLineIdx = i; renderLines(a, false); drawArrows(); };
     box.appendChild(div);
   }
-  const card = $("beautyCard");
-  if (a.beautiful_move && a.beautiful_move !== a.best_move && a.beauty) {
-    const b = a.beauty;
-    const beautifulSan = uciToSan(a.fen, a.beautiful_move);
-    const bestSan = uciToSan(a.fen, a.best_move);
-    card.style.display = "block";
-    card.innerHTML = `<b>Beautiful choice:</b> ${beautifulSan}
-      (costs ${(a.beauty_cost_cp/100).toFixed(2)} vs best ${bestSan})<br>
-      sacrifice ${b.sacrifice.toFixed(1)} · attack ${b.attack.toFixed(1)} ·
-      tactical ${b.tactical.toFixed(1)} · surprise ${b.surprise.toFixed(2)}`;
-  } else card.style.display = "none";
+}
+
+function updateGameOverUi() {
+  if (!game.isGameOver()) return;
+  const reason = game.isCheckmate() ? "Checkmate" : game.isStalemate() ? "Stalemate" : "Game over";
+  $("status").textContent = reason + " — analysis disabled.";
+  lastAnalysis = null;
+  $("lines").innerHTML = "";
+  $("arrows").innerHTML = "";
+}
+
+function scheduleAnalyze() {
+  clearTimeout(analyzeTimer);
+  analyzeTimer = setTimeout(analyze, ANALYZE_DEBOUNCE_MS);
 }
 
 async function analyze() {
-  if (game.isGameOver()) { $("status").textContent = "Game over."; return; }
-  $("status").textContent = "Analyzing...";
+  if (game.isGameOver()) {
+    updateGameOverUi();
+    return;
+  }
+  const seq = ++analyzeSeq;
+  const requestFen = game.fen();
+  $("status").textContent = "Analyzing…";
+  setEvalBarPending();
+  renderLines(lastAnalysis, true);
+  $("arrows").innerHTML = "";
+
   try {
     const res = await fetch(API, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         fen: game.fen(),
         multipv: 5,
-        simulations: parseInt($("sims").value) || 200,
-        beauty: $("beauty").checked,
+        simulations: parseInt($("sims").value, 10) || 200,
       }),
     });
+    if (seq !== analyzeSeq) return;
     if (!res.ok) throw new Error(await res.text());
     const a = await res.json();
+    if (seq !== analyzeSeq) return;
+    if (a.fen !== requestFen) return;
+
     lastAnalysis = a;
-    setEvalBar(a.eval_cp, game.turn());
-    renderLines(a); drawArrows();
-    $("status").textContent = "";
-  } catch (e) {
+    selectedLineIdx = 0;
+    setEvalBar(a.eval_cp, fenTurn(a.fen));
+    renderLines(a, false);
+    drawArrows();
+    const ms = a.elapsed_ms != null ? ` (${a.elapsed_ms} ms)` : "";
+    $("status").textContent = `Analysis complete${ms}.`;
+  } catch {
+    if (seq !== analyzeSeq) return;
     $("status").textContent = "Backend offline? Start: uvicorn server.app:app --port 8000";
+    renderLines(null, false);
+  }
+}
+
+async function refreshHealth() {
+  try {
+    const res = await fetch("/health");
+    serverHealth = await res.json();
+    const ck = serverHealth.trained ? serverHealth.checkpoint.split(/[/\\]/).pop() : "untrained net";
+    $("footer").textContent =
+      `Checkpoint: ${ck} · encoding v${serverHealth.encoding_version}`;
+    $("evalBar").classList.toggle("untrained", !serverHealth.trained);
+  } catch {
+    $("footer").textContent = "Server offline — start uvicorn server.app:app --port 8000";
   }
 }
 
 $("flip").onclick = () => { orientation = orientation === "w" ? "b" : "w"; render(); };
-$("reset").onclick = () => { game = new Chess(); init(); };
+$("reset").onclick = initFromStart;
 $("prev").onclick = () => goTo(ply - 1);
 $("next").onclick = () => goTo(ply + 1);
-$("analyze").onclick = analyze;
-$("beauty").onchange = analyze;
+$("analyze").onclick = () => { clearTimeout(analyzeTimer); analyze(); };
 $("loadBtn").onclick = () => {
-  const text = $("importBox").value.trim();
   try {
-    const g = new Chess();
-    if (text.includes("/") && text.split(" ").length >= 4 && !text.includes("\n")) g.load(text);
-    else g.loadPgn(text);
-    game = g; init();
-  } catch (e) { $("status").textContent = "Could not parse PGN/FEN."; }
+    parseImport($("importBox").value);
+    $("status").textContent = "Loaded.";
+  } catch {
+    $("status").textContent = "Could not parse PGN/FEN.";
+  }
 };
 
-init();
+document.addEventListener("keydown", e => {
+  if (e.target.matches("textarea, input")) return;
+  if (e.key === "ArrowLeft") { e.preventDefault(); goTo(ply - 1); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); goTo(ply + 1); }
+  else if (e.key === "f" || e.key === "F") { orientation = orientation === "w" ? "b" : "w"; render(); }
+  else if (e.key === "a" || e.key === "A") { clearTimeout(analyzeTimer); analyze(); }
+});
+document.addEventListener("mousemove", onDocumentMouseMove);
+document.addEventListener("mouseup", onDocumentMouseUp);
+
+initFromStart();
+refreshHealth();
 </script>
 </body>
 </html>

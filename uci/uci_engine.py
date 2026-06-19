@@ -5,7 +5,6 @@ Run:  python -m uci.uci_engine [path/to/checkpoint.pt]
 
 Custom options:
   setoption name Simulations value 400   ; search budget per move
-  setoption name Beauty value true        ; play the beautiful move vs the best
   setoption name MultiPV value 3
 """
 
@@ -25,7 +24,6 @@ class UCIEngine:
         self.checkpoint = checkpoint
         self.board = chess.Board()
         self.analyzer = Analyzer(checkpoint, self.cfg)
-        self.beauty = True
         self.multipv = 1
 
     def run(self) -> None:
@@ -50,7 +48,6 @@ class UCIEngine:
         self._send("id name Immortalite Zero")
         self._send("id author self-play")
         self._send("option name Simulations type spin default 100 min 1 max 100000")
-        self._send("option name Beauty type check default true")
         self._send("option name MultiPV type spin default 1 min 1 max 5")
         self._send("uciok")
 
@@ -62,9 +59,6 @@ class UCIEngine:
         value = parts[parts.index("value") + 1]
         if name == "simulations":
             self.cfg.mcts.simulations = int(value)
-        elif name == "beauty":
-            self.beauty = value.lower() == "true"
-            self.cfg.beauty.enabled = self.beauty
         elif name == "multipv":
             self.multipv = int(value)
 
@@ -89,8 +83,7 @@ class UCIEngine:
         for i, line in enumerate(analysis.lines, start=1):
             pv = " ".join(line["pv"])
             self._send(f"info multipv {i} depth 1 score cp {line['eval_cp']} pv {pv}")
-        move = analysis.beautiful_move if self.beauty else analysis.best_move
-        move = move or analysis.best_move
+        move = analysis.best_move
         if move is None:  # no legal move
             self._send("bestmove 0000")
         else:

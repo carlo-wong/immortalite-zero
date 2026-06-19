@@ -8,7 +8,7 @@ It learns purely from self-play (no human games, no Stockfish). Optional human-g
 
 - **Self-play training** with reward shaping that discourages dull draws (contempt) for more decisive, aggressive play.
 - **Beauty-bias move selection**: among moves that are *sound* (within a small win-probability window of the best move), it prefers the most sacrificial / attacking / tactical / surprising one. Soundness is a hard gate; beauty only breaks ties within it.
-- **Analysis GUI**: board, eval bar, best-move + beautiful-move arrows, top-3 candidate lines (MultiPV), PGN/FEN import, move navigation — and it shows the *cost* of the beautiful move vs. the objectively best one.
+- **Analysis GUI**: board, eval bar, best-move arrow, top-5 candidate lines (MultiPV), PGN/FEN import, move navigation.
 - **UCI-compatible** so the engine also runs in Arena, Cutechess, or Lichess's local-engine mode.
 
 ## Project layout
@@ -41,8 +41,11 @@ python -m tests.test_pipeline
 
 # Start the analysis server + GUI
 python -m uvicorn server.app:app --port 8000
-# open http://localhost:8000/app/
+# open http://localhost:8000/app/          (vanilla GUI)
+# open http://localhost:8000/app-react/  (React + Chessground, run `npm run build` in web/react first)
 ```
+
+The server auto-discovers `results/latest.pt`, then `checkpoints/latest.pt`, unless `IMMORTALITE_ZERO_CHECKPOINT` is set.
 
 To analyze with a trained net, point the server at a checkpoint:
 
@@ -77,7 +80,7 @@ python -m engine.inspect_encoding --checkpoint-dir checkpoints --only-incompatib
 python -m uci.uci_engine checkpoints/latest.pt
 ```
 
-Options: `Simulations` (search budget/move), `Beauty` (play beautiful vs best), `MultiPV`.
+Options: `Simulations` (search budget/move), `MultiPV`.
 
 ## Design notes & honest expectations
 
@@ -97,4 +100,4 @@ Options: `Simulations` (search budget/move), `Beauty` (play beautiful vs best), 
 
 - Optional supervised pretraining on attacking-master games (Tal, Kasparov, Morphy) for more strength + sharper style.
 - Full Gumbel sequential-halving budget allocation in search.
-- Upgrade GUI to React + Chessground if a richer UI is wanted.
+- Upgrade GUI to React + Chessground if a richer UI is wanted. (Scaffold at `web/react/` — build with `npm run build`, served at `/app-react/`.)

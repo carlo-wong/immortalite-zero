@@ -72,17 +72,14 @@ def main() -> None:
             assert np.allclose(s1.policy, s2.policy)
             assert s1.value == s2.value
 
-    # 3. Analyzer yields eval, best vs beautiful, and candidate lines.
+    # 3. Analyzer yields eval, best move, and candidate lines.
     analyzer = Analyzer(None, cfg)
     analysis = analyzer.analyze(board, multipv=3, simulations=24)
     out = asdict(analysis)
     assert out["best_move"] in [m.uci() for m in board.legal_moves]
     assert len(out["lines"]) == 3
     print("analysis sample:")
-    print(json.dumps({k: out[k] for k in
-                      ["eval_cp", "best_move", "beautiful_move", "beauty_cost_cp", "beauty"]},
-                     indent=2))
-    print("top line:", out["lines"][0])
+    print(json.dumps({k: out[k] for k in ["eval_cp", "best_move", "lines"]}, indent=2))
     print("\nALL PIPELINE CHECKS PASSED")
 
 

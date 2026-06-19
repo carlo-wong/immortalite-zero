@@ -13,4 +13,6 @@ research/
 .cursor/
 *.zip
 results/
+syzygy345/
 AGENTS.md
+LOCAL.md
