@@ -31,10 +31,11 @@ def _softmax(x: np.ndarray) -> np.ndarray:
 
 
 class _Node:
-    __slots__ = ("prior", "children", "N", "W", "terminal_checked", "is_terminal", "terminal_value")
+    __slots__ = ("prior", "children", "N", "W", "terminal_checked", "is_terminal", "terminal_value", "move")
 
-    def __init__(self, prior: float):
+    def __init__(self, prior: float, move: chess.Move | None = None):
         self.prior = prior
+        self.move = move
         self.children: dict[int, _Node] = {}
         self.N = 0
         self.W = 0.0
@@ -108,7 +109,7 @@ class MCTS:
         idxs = list(mapping.keys())
         priors = _softmax(np.array([logits[i] for i in idxs], dtype=np.float32))
         for i, p in zip(idxs, priors):
-            node.children[i] = _Node(float(p))
+            node.children[i] = _Node(float(p), move=mapping[i])
         return float(value)
 
     def search_gen(self, board: chess.Board, simulations: int | None = None,
@@ -129,31 +130,37 @@ class MCTS:
 
         for _ in range(sims):
             node = root
-            sim_board = board.copy()
             path = [root]
+            depth = 0
 
-            is_terminal, _ = self._terminal_eval(node, sim_board, root_turn)
+            is_terminal, _ = self._terminal_eval(node, board, root_turn)
             while node.expanded and not is_terminal:
                 idx, child = self._select_child(node)
-                move = index_to_move(idx, sim_board)
+                move = child.move
                 if move is None:  # safety: should not happen post round-trip test
+                    move = index_to_move(idx, board)
+                if move is None:
                     break
-                sim_board.push(move)
+                board.push(move)
+                depth += 1
                 node = child
                 path.append(node)
-                is_terminal, _ = self._terminal_eval(node, sim_board, root_turn)
+                is_terminal, _ = self._terminal_eval(node, board, root_turn)
 
-            is_terminal, terminal_value = self._terminal_eval(node, sim_board, root_turn)
+            is_terminal, terminal_value = self._terminal_eval(node, board, root_turn)
             if is_terminal:
                 value = terminal_value
             else:
-                logits, value = yield sim_board
-                value = self._expand_from_eval(node, sim_board, logits, value)
+                logits, value = yield board
+                value = self._expand_from_eval(node, board, logits, value)
 
             for n in reversed(path):
                 n.N += 1
                 n.W += value
                 value = -value
+
+            for _ in range(depth):
+                board.pop()
 
         return self._collect(root, board, root_value)
 

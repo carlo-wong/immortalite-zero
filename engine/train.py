@@ -84,32 +84,44 @@ def _load_matching_state_dict(module: torch.nn.Module, state_dict: dict,
               f"reinitialized {reinitialized}, skipped {skipped}")
 
 
-def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str) -> dict[str, float]:
-    planes = torch.from_numpy(np.stack([s.planes for s in batch])).to(device)
-    target_pi = torch.from_numpy(np.stack([s.policy for s in batch])).to(device)
-    target_v = torch.tensor([s.value for s in batch], dtype=torch.float32, device=device)
+def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str,
+               scaler: torch.cuda.amp.GradScaler | None = None) -> dict[str, float]:
+    use_cuda = device.startswith("cuda")
+    with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_cuda):
+        planes = torch.from_numpy(np.stack([s.planes for s in batch])).to(device)
+        target_pi = torch.from_numpy(np.stack([s.policy for s in batch])).to(device)
+        target_v = torch.tensor([s.value for s in batch], dtype=torch.float32, device=device)
 
-    logits, value_logits = net(planes)
-    value = net.value_from_logits(value_logits)
-    log_probs = F.log_softmax(logits, dim=1)
-    policy_loss = -(target_pi * log_probs).sum(dim=1).mean()
-    value_log_probs = F.log_softmax(value_logits, dim=1)
-    bins = max(2, int(net.value_support.numel()))
-    bin_width = 2.0 / (bins - 1)
-    sigma = 0.75 * bin_width
-    target_v_dist = _gaussian_value_targets(target_v, net.value_support, sigma)
-    value_loss = -(target_v_dist * value_log_probs).sum(dim=1).mean()
-    loss = policy_loss + value_loss
+        logits, value_logits = net(planes)
+        value = net.value_from_logits(value_logits)
+        log_probs = F.log_softmax(logits, dim=1)
+        policy_loss = -(target_pi * log_probs).sum(dim=1).mean()
+        value_log_probs = F.log_softmax(value_logits, dim=1)
+        bins = max(2, int(net.value_support.numel()))
+        bin_width = 2.0 / (bins - 1)
+        sigma = 0.75 * bin_width
+        target_v_dist = _gaussian_value_targets(target_v, net.value_support, sigma)
+        value_loss = -(target_v_dist * value_log_probs).sum(dim=1).mean()
+        loss = policy_loss + value_loss
 
     optimizer.zero_grad()
-    loss.backward()
-    grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=5.0)
-    optimizer.step()
+    if scaler is not None:
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
+        grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=5.0)
+        scaler.step(optimizer)
+        scaler.update()
+    else:
+        loss.backward()
+        grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=5.0)
+        optimizer.step()
 
     with torch.no_grad():
-        probs = log_probs.exp()
-        policy_entropy = -(probs * log_probs).sum(dim=1).mean()
-        value_sign_acc = (torch.sign(value) == torch.sign(target_v)).float().mean()
+        probs = log_probs.float().exp()
+        log_probs_f = log_probs.float()
+        value_f = value.float()
+        policy_entropy = -(probs * log_probs_f).sum(dim=1).mean()
+        value_sign_acc = (torch.sign(value_f) == torch.sign(target_v)).float().mean()
         policy_top1_agree = (torch.argmax(logits, dim=1) == torch.argmax(target_pi, dim=1)).float().mean()
 
     return {
@@ -122,7 +134,8 @@ def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str) -> di
     }
 
 
-def save_checkpoint(net: torch.nn.Module, cfg: Config, path: str, iteration: int = 0) -> None:
+def save_checkpoint(net: torch.nn.Module, cfg: Config, path: str, iteration: int = 0,
+                    optimizer: torch.optim.Optimizer | None = None) -> None:
     ckpt_dir = os.path.dirname(path) or "."
     os.makedirs(ckpt_dir, exist_ok=True)
     # Store the net architecture so the loader can rebuild a matching model,
@@ -134,6 +147,8 @@ def save_checkpoint(net: torch.nn.Module, cfg: Config, path: str, iteration: int
         "iteration": iteration,
         "encoding_version": ENCODING_VERSION,
     }
+    if optimizer is not None:
+        payload["optimizer"] = optimizer.state_dict()
     fd, tmp_path = tempfile.mkstemp(dir=ckpt_dir, suffix=".pt.tmp")
     os.close(fd)
     try:
@@ -421,14 +436,22 @@ def _save_sample_shard(ckpt_dir: str, iteration: int, samples: list[Sample]) -> 
     policies = np.stack([s.policy for s in samples]).astype(np.float16)
     players = np.array([bool(s.player) for s in samples], dtype=np.bool_)
     values = np.array([s.value for s in samples], dtype=np.float32)
-    np.savez_compressed(
-        path,
-        planes=planes,
-        policies=policies,
-        players=players,
-        values=values,
-        encoding_version=np.array([ENCODING_VERSION], dtype=np.int16),
-    )
+    fd, tmp_path = tempfile.mkstemp(dir=ckpt_dir, suffix=".npz")
+    os.close(fd)
+    try:
+        np.savez_compressed(
+            tmp_path,
+            planes=planes,
+            policies=policies,
+            players=players,
+            values=values,
+            encoding_version=np.array([ENCODING_VERSION], dtype=np.int16),
+        )
+        os.replace(tmp_path, path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
 
 
 def _shard_encoding_version(data: np.lib.npyio.NpzFile) -> int:
@@ -658,6 +681,12 @@ def main() -> None:
 
     optimizer = torch.optim.Adam(net.parameters(), lr=cfg.train.learning_rate,
                                  weight_decay=cfg.train.weight_decay)
+    if state is not None and isinstance(state, dict) and "optimizer" in state:
+        optimizer.load_state_dict(state["optimizer"])
+        print("resumed optimizer state")
+    scaler: torch.cuda.amp.GradScaler | None = None
+    if args.device.startswith("cuda"):
+        scaler = torch.cuda.amp.GradScaler()
     buffer: deque[Sample] = deque(maxlen=cfg.train.replay_buffer_size)
     loaded = _warm_replay_buffer(buffer, cfg.train.checkpoint_dir, cfg.train.replay_window)
     if loaded:
@@ -719,7 +748,7 @@ def main() -> None:
                                  desc=f"iter {it} train", unit="step", leave=False)
                 for step in train_bar:
                     batch = random.sample(buffer, cfg.train.batch_size)
-                    step_result = train_step(net, optimizer, batch, args.device)
+                    step_result = train_step(net, optimizer, batch, args.device, scaler=scaler)
                     for name, value in step_result.items():
                         step_metrics.setdefault(name, []).append(value)
                     _log_step_metrics(cfg.train.checkpoint_dir, it, int(step), step_result)
@@ -730,10 +759,11 @@ def main() -> None:
                     )
             net.eval()
 
-            save_checkpoint(net, cfg, os.path.join(cfg.train.checkpoint_dir, "latest.pt"), it)
+            save_checkpoint(net, cfg, os.path.join(cfg.train.checkpoint_dir, "latest.pt"), it,
+                            optimizer=optimizer)
             if args.save_every and it % args.save_every == 0:
                 snap = os.path.join(cfg.train.checkpoint_dir, f"ckpt_iter_{it:04d}.pt")
-                save_checkpoint(net, cfg, snap, it)
+                save_checkpoint(net, cfg, snap, it, optimizer=optimizer)
 
             def _mean_metric(name: str) -> float:
                 values = step_metrics.get(name)
