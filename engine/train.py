@@ -289,26 +289,6 @@ def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games
         )
 
 
-def _log_gate_ref_metrics(ckpt_dir: str, it: int, ref_iter: int, metrics: dict, games: int) -> None:
-    os.makedirs(ckpt_dir or ".", exist_ok=True)
-    path = os.path.join(ckpt_dir, "metrics_gate_ref.csv")
-    new = not os.path.exists(path)
-    with open(path, "a", encoding="utf-8") as f:
-        if new:
-            f.write(
-                "iter,prev_iter,winrate,wins_as_white,wins_as_black,"
-                "losses_as_white,losses_as_black,draws_as_white,draws_as_black,"
-                "mean_game_len,games,terminations\n"
-            )
-        f.write(
-            f"{it},{ref_iter},{metrics['winrate']:.6f},"
-            f"{metrics['wins_as_white']},{metrics['wins_as_black']},"
-            f"{metrics['losses_as_white']},{metrics['losses_as_black']},"
-            f"{metrics['draws_as_white']},{metrics['draws_as_black']},"
-            f"{metrics['mean_game_len']:.2f},{games},{metrics['terminations']}\n"
-        )
-
-
 def _winner_of(game: GameResult) -> int:
     """Return +1 for white win, -1 for black win, 0 for non-decisive result."""
     if game.termination not in {"checkmate", "resign", "tablebase_win"} or not game.samples:
@@ -621,10 +601,6 @@ def main() -> None:
                         help="iterations spanned by cosine decay")
     parser.add_argument("--grad-clip", type=float, default=None,
                         help="gradient clip norm (default: cfg.train.grad_clip_norm)")
-    parser.add_argument("--gate-reference", type=str, default=None,
-                        help="frozen checkpoint for absolute strength gate")
-    parser.add_argument("--gate-reference-every", type=int, default=20,
-                        help="run reference gate every N iterations")
     parser.add_argument("--syzygy-path", type=str, default=None,
                         help="path to Syzygy WDL tablebase directory for self-play adjudication")
     args = parser.parse_args()
@@ -763,35 +739,6 @@ def main() -> None:
             raise ValueError(f"Syzygy path does not exist or is not a directory: {cfg.train.syzygy_path}")
         tablebase = chess.syzygy.open_tablebase(cfg.train.syzygy_path)
         print(f"syzygy: enabled ({cfg.train.syzygy_path})")
-
-    ref_net: ChessNet | None = None
-    ref_iter: int = -1
-    if args.gate_reference:
-        if not os.path.exists(args.gate_reference):
-            print(f"warning: --gate-reference {args.gate_reference!r} not found; reference gate disabled")
-        else:
-            try:
-                ref_state = torch.load(args.gate_reference, map_location=args.device)
-                ref_encoding_version = int(ref_state.get("encoding_version", 1))
-                if ref_encoding_version != ENCODING_VERSION:
-                    print(
-                        f"warning: reference checkpoint encoding {ref_encoding_version} != "
-                        f"{ENCODING_VERSION}; reference gate disabled"
-                    )
-                else:
-                    ref_net_cfg = cfg.net
-                    if "net" in ref_state:
-                        ref_net_cfg = NetConfig(**ref_state["net"])
-                    ref_net = ChessNet(ref_net_cfg).to(args.device)
-                    _load_matching_state_dict(ref_net, ref_state["model"], label="ref gate load", verbose=False)
-                    ref_net.eval()
-                    ref_iter = int(ref_state.get("iteration", -1))
-                    print(
-                        f"reference gate: loaded {os.path.basename(args.gate_reference)} "
-                        f"(iter {ref_iter}), every {args.gate_reference_every} iters"
-                    )
-            except Exception as exc:
-                print(f"warning: failed to load reference checkpoint ({exc}); reference gate disabled")
 
     try:
         for local_it in range(args.iterations):
@@ -997,37 +944,6 @@ def main() -> None:
                             print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")
                 except Exception as exc:
                     print(f"gate iter {it}: failed ({exc}); continuing", flush=True)
-
-            if ref_net is not None and it % args.gate_reference_every == 0:
-                gate_sims = args.gate_sims if args.gate_sims is not None else sims
-                try:
-                    ref_metrics = play_match(
-                        net,
-                        ref_net,
-                        cfg,
-                        n_games=args.gate_games,
-                        sims=gate_sims,
-                        device=args.device,
-                        exploration_moves=args.gate_exploration_moves,
-                        tablebase=tablebase,
-                    )
-                    total_wins = ref_metrics["wins_as_white"] + ref_metrics["wins_as_black"]
-                    total_losses = ref_metrics["losses_as_white"] + ref_metrics["losses_as_black"]
-                    total_draws = ref_metrics["draws_as_white"] + ref_metrics["draws_as_black"]
-                    print(
-                        f"ref gate iter {it}: current vs reference (iter {ref_iter}) "
-                        f"-> {ref_metrics['winrate']:.3f} "
-                        f"(Wins: {total_wins}, Losses: {total_losses}, Draws: {total_draws})"
-                    )
-                    _log_gate_ref_metrics(
-                        cfg.train.checkpoint_dir,
-                        it,
-                        ref_iter,
-                        ref_metrics,
-                        args.gate_games,
-                    )
-                except Exception as exc:
-                    print(f"ref gate iter {it}: failed ({exc}); continuing", flush=True)
     finally:
         if tablebase is not None:
             tablebase.close()

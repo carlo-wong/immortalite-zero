@@ -12,7 +12,6 @@ from engine.selfplay import GameResult
 from engine.train import (
     play_match,
     _log_gate_metrics,
-    _log_gate_ref_metrics,
     _log_metrics,
     _snapshot_at_iter,
     _update_metrics_winrate_vs_prev,
@@ -224,49 +223,3 @@ def test_snapshot_at_iter_returns_none_when_missing() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         assert _snapshot_at_iter(tmpdir, 10) is None
         assert _snapshot_at_iter(tmpdir, -1) is None
-
-
-def test_log_gate_ref_metrics_writes_correct_csv() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        it = 20
-        ref_iter = 80
-        games = 30
-        metrics = {
-            "winrate": 0.70,
-            "wins_as_white": 8,
-            "wins_as_black": 7,
-            "losses_as_white": 4,
-            "losses_as_black": 3,
-            "draws_as_white": 4,
-            "draws_as_black": 4,
-            "mean_game_len": 95.0,
-            "terminations": "checkmate:20;threefold_repetition:10"
-        }
-
-        _log_gate_ref_metrics(tmpdir, it, ref_iter, metrics, games)
-
-        csv_path = os.path.join(tmpdir, "metrics_gate_ref.csv")
-        assert os.path.exists(csv_path)
-
-        df = pd.read_csv(csv_path)
-        assert len(df) == 1
-        expected_cols = [
-            "iter", "prev_iter", "winrate", "wins_as_white", "wins_as_black",
-            "losses_as_white", "losses_as_black", "draws_as_white", "draws_as_black",
-            "mean_game_len", "games", "terminations"
-        ]
-        assert list(df.columns) == expected_cols
-
-        row = df.iloc[0]
-        assert int(row["iter"]) == it
-        assert int(row["prev_iter"]) == ref_iter
-        assert float(row["winrate"]) == pytest.approx(metrics["winrate"])
-        assert int(row["wins_as_white"]) == metrics["wins_as_white"]
-        assert int(row["wins_as_black"]) == metrics["wins_as_black"]
-        assert int(row["losses_as_white"]) == metrics["losses_as_white"]
-        assert int(row["losses_as_black"]) == metrics["losses_as_black"]
-        assert int(row["draws_as_white"]) == metrics["draws_as_white"]
-        assert int(row["draws_as_black"]) == metrics["draws_as_black"]
-        assert float(row["mean_game_len"]) == pytest.approx(metrics["mean_game_len"])
-        assert int(row["games"]) == games
-        assert row["terminations"] == metrics["terminations"]
