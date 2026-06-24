@@ -60,6 +60,17 @@ def _lr_for_iteration(cfg: Config, it: int) -> float:
     return min_lr + (peak_lr - min_lr) * cosine
 
 
+def _finite_median(values: list[float]) -> float:
+    finite = [v for v in values if math.isfinite(v)]
+    if not finite:
+        return float("nan")
+    finite.sort()
+    mid = len(finite) // 2
+    if len(finite) % 2 == 1:
+        return finite[mid]
+    return (finite[mid - 1] + finite[mid]) / 2.0
+
+
 def _gaussian_value_targets(target_v: torch.Tensor, support: torch.Tensor,
                             sigma: float) -> torch.Tensor:
     diff = support.unsqueeze(0) - target_v.unsqueeze(1)
@@ -85,11 +96,12 @@ def _load_matching_state_dict(module: torch.nn.Module, state_dict: dict,
 
 
 def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str,
-               scaler: torch.cuda.amp.GradScaler | None = None) -> dict[str, float]:
+               scaler: torch.cuda.amp.GradScaler | None = None,
+               grad_clip: float = 10.0) -> dict[str, float]:
     use_cuda = device.startswith("cuda")
     with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_cuda):
-        planes = torch.from_numpy(np.stack([s.planes for s in batch])).to(device)
-        target_pi = torch.from_numpy(np.stack([s.policy for s in batch])).to(device)
+        planes = torch.from_numpy(np.stack([s.planes for s in batch])).to(device).float()
+        target_pi = torch.from_numpy(np.stack([s.policy for s in batch])).to(device).float()
         target_v = torch.tensor([s.value for s in batch], dtype=torch.float32, device=device)
 
         logits, value_logits = net(planes)
@@ -108,12 +120,12 @@ def train_step(net: ChessNet, optimizer, batch: list[Sample], device: str,
     if scaler is not None:
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
-        grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=5.0)
+        grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=grad_clip)
         scaler.step(optimizer)
         scaler.update()
     else:
         loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=5.0)
+        grad_norm = torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=grad_clip)
         optimizer.step()
 
     with torch.no_grad():
@@ -236,6 +248,27 @@ def _log_step_metrics(ckpt_dir: str, it: int, step: int, metrics: dict[str, floa
         )
 
 
+def _flush_step_metrics(ckpt_dir: str, it: int, rows: list[tuple[int, dict[str, float]]]) -> None:
+    if not rows:
+        return
+    os.makedirs(ckpt_dir or ".", exist_ok=True)
+    path = os.path.join(ckpt_dir, "metrics_steps.csv")
+    new = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8") as f:
+        if new:
+            f.write(
+                "iter,step,policy_loss,value_loss,policy_entropy,value_sign_acc,"
+                "policy_top1_agree,grad_norm\n"
+            )
+        for step, metrics in rows:
+            f.write(
+                f"{it},{step},"
+                f"{metrics['policy_loss']:.6f},{metrics['value_loss']:.6f},"
+                f"{metrics['policy_entropy']:.6f},{metrics['value_sign_acc']:.6f},"
+                f"{metrics['policy_top1_agree']:.6f},{metrics['grad_norm']:.6f}\n"
+            )
+
+
 def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games: int) -> None:
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = os.path.join(ckpt_dir, "metrics_gates.csv")
@@ -249,6 +282,26 @@ def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games
             )
         f.write(
             f"{it},{prev_it},{metrics['winrate']:.6f},"
+            f"{metrics['wins_as_white']},{metrics['wins_as_black']},"
+            f"{metrics['losses_as_white']},{metrics['losses_as_black']},"
+            f"{metrics['draws_as_white']},{metrics['draws_as_black']},"
+            f"{metrics['mean_game_len']:.2f},{games},{metrics['terminations']}\n"
+        )
+
+
+def _log_gate_ref_metrics(ckpt_dir: str, it: int, ref_iter: int, metrics: dict, games: int) -> None:
+    os.makedirs(ckpt_dir or ".", exist_ok=True)
+    path = os.path.join(ckpt_dir, "metrics_gate_ref.csv")
+    new = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8") as f:
+        if new:
+            f.write(
+                "iter,prev_iter,winrate,wins_as_white,wins_as_black,"
+                "losses_as_white,losses_as_black,draws_as_white,draws_as_black,"
+                "mean_game_len,games,terminations\n"
+            )
+        f.write(
+            f"{it},{ref_iter},{metrics['winrate']:.6f},"
             f"{metrics['wins_as_white']},{metrics['wins_as_black']},"
             f"{metrics['losses_as_white']},{metrics['losses_as_black']},"
             f"{metrics['draws_as_white']},{metrics['draws_as_black']},"
@@ -476,8 +529,8 @@ def _load_sample_shard(path: str) -> list[Sample]:
             for i in range(values.shape[0]):
                 samples.append(
                     Sample(
-                        planes=planes[i].astype(np.float32),
-                        policy=policies[i].astype(np.float32),
+                        planes=planes[i],
+                        policy=policies[i],
                         player=bool(players[i]),
                         value=float(values[i]),
                     )
@@ -564,6 +617,14 @@ def main() -> None:
                         help="override learning rate")
     parser.add_argument("--lr-min", type=float, default=None,
                         help="minimum learning rate for cosine schedule")
+    parser.add_argument("--lr-total-iters", type=int, default=None,
+                        help="iterations spanned by cosine decay")
+    parser.add_argument("--grad-clip", type=float, default=None,
+                        help="gradient clip norm (default: cfg.train.grad_clip_norm)")
+    parser.add_argument("--gate-reference", type=str, default=None,
+                        help="frozen checkpoint for absolute strength gate")
+    parser.add_argument("--gate-reference-every", type=int, default=20,
+                        help="run reference gate every N iterations")
     parser.add_argument("--syzygy-path", type=str, default=None,
                         help="path to Syzygy WDL tablebase directory for self-play adjudication")
     args = parser.parse_args()
@@ -612,6 +673,10 @@ def main() -> None:
         cfg.train.learning_rate = args.lr
     if args.lr_min is not None:
         cfg.train.lr_min = args.lr_min
+    if args.lr_total_iters is not None:
+        cfg.train.lr_total_iters = args.lr_total_iters
+    if args.grad_clip is not None:
+        cfg.train.grad_clip_norm = args.grad_clip
     if args.syzygy_path:
         cfg.train.syzygy_path = args.syzygy_path
     if args.max_game_moves is not None:
@@ -699,6 +764,35 @@ def main() -> None:
         tablebase = chess.syzygy.open_tablebase(cfg.train.syzygy_path)
         print(f"syzygy: enabled ({cfg.train.syzygy_path})")
 
+    ref_net: ChessNet | None = None
+    ref_iter: int = -1
+    if args.gate_reference:
+        if not os.path.exists(args.gate_reference):
+            print(f"warning: --gate-reference {args.gate_reference!r} not found; reference gate disabled")
+        else:
+            try:
+                ref_state = torch.load(args.gate_reference, map_location=args.device)
+                ref_encoding_version = int(ref_state.get("encoding_version", 1))
+                if ref_encoding_version != ENCODING_VERSION:
+                    print(
+                        f"warning: reference checkpoint encoding {ref_encoding_version} != "
+                        f"{ENCODING_VERSION}; reference gate disabled"
+                    )
+                else:
+                    ref_net_cfg = cfg.net
+                    if "net" in ref_state:
+                        ref_net_cfg = NetConfig(**ref_state["net"])
+                    ref_net = ChessNet(ref_net_cfg).to(args.device)
+                    _load_matching_state_dict(ref_net, ref_state["model"], label="ref gate load", verbose=False)
+                    ref_net.eval()
+                    ref_iter = int(ref_state.get("iteration", -1))
+                    print(
+                        f"reference gate: loaded {os.path.basename(args.gate_reference)} "
+                        f"(iter {ref_iter}), every {args.gate_reference_every} iters"
+                    )
+            except Exception as exc:
+                print(f"warning: failed to load reference checkpoint ({exc}); reference gate disabled")
+
     try:
         for local_it in range(args.iterations):
             it = start_iter + local_it
@@ -738,25 +832,31 @@ def main() -> None:
                 tablebase=tablebase,
             )
             game_bar.close()
+            selfplay_dt = time.time() - t0
 
             _save_sample_shard(cfg.train.checkpoint_dir, it, iteration_samples)
 
             net.train()
             step_metrics: dict[str, list[float]] = {}
+            step_rows: list[tuple[int, dict[str, float]]] = []
+            t_train = time.time()
             if len(buffer) >= cfg.train.batch_size:
                 train_bar = tqdm(range(cfg.train.train_steps_per_iteration),
                                  desc=f"iter {it} train", unit="step", leave=False)
                 for step in train_bar:
                     batch = random.sample(buffer, cfg.train.batch_size)
-                    step_result = train_step(net, optimizer, batch, args.device, scaler=scaler)
+                    step_result = train_step(net, optimizer, batch, args.device, scaler=scaler,
+                                             grad_clip=cfg.train.grad_clip_norm)
                     for name, value in step_result.items():
                         step_metrics.setdefault(name, []).append(value)
-                    _log_step_metrics(cfg.train.checkpoint_dir, it, int(step), step_result)
+                    step_rows.append((int(step), step_result))
                     train_bar.set_postfix(
                         p=f"{step_result['policy_loss']:.3f}",
                         v=f"{step_result['value_loss']:.3f}",
                         g=f"{step_result['grad_norm']:.2f}",
                     )
+            train_dt = time.time() - t_train
+            _flush_step_metrics(cfg.train.checkpoint_dir, it, step_rows)
             net.eval()
 
             save_checkpoint(net, cfg, os.path.join(cfg.train.checkpoint_dir, "latest.pt"), it,
@@ -775,7 +875,7 @@ def main() -> None:
             policy_entropy = _mean_metric("policy_entropy")
             value_sign_acc = _mean_metric("value_sign_acc")
             policy_top1_agree = _mean_metric("policy_top1_agree")
-            grad_norm = _mean_metric("grad_norm")
+            grad_norm = _finite_median(step_metrics.get("grad_norm", []))
 
             total_games = len(game_lengths)
             white_wins = sum(1 for o in game_outcomes if o == 1)
@@ -805,6 +905,7 @@ def main() -> None:
                   f"| lr {current_lr:.3e} "
                   f"| decisive {decisive_rate:.3f} "
                   f"| ends {term_summary} "
+                  f"| selfplay {selfplay_dt:.1f}s train {train_dt:.1f}s"
                   f"| {dt:.1f}s", flush=True)
 
             # Log training metrics before the gate so OOM during gating still
@@ -896,6 +997,37 @@ def main() -> None:
                             print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")
                 except Exception as exc:
                     print(f"gate iter {it}: failed ({exc}); continuing", flush=True)
+
+            if ref_net is not None and it % args.gate_reference_every == 0:
+                gate_sims = args.gate_sims if args.gate_sims is not None else sims
+                try:
+                    ref_metrics = play_match(
+                        net,
+                        ref_net,
+                        cfg,
+                        n_games=args.gate_games,
+                        sims=gate_sims,
+                        device=args.device,
+                        exploration_moves=args.gate_exploration_moves,
+                        tablebase=tablebase,
+                    )
+                    total_wins = ref_metrics["wins_as_white"] + ref_metrics["wins_as_black"]
+                    total_losses = ref_metrics["losses_as_white"] + ref_metrics["losses_as_black"]
+                    total_draws = ref_metrics["draws_as_white"] + ref_metrics["draws_as_black"]
+                    print(
+                        f"ref gate iter {it}: current vs reference (iter {ref_iter}) "
+                        f"-> {ref_metrics['winrate']:.3f} "
+                        f"(Wins: {total_wins}, Losses: {total_losses}, Draws: {total_draws})"
+                    )
+                    _log_gate_ref_metrics(
+                        cfg.train.checkpoint_dir,
+                        it,
+                        ref_iter,
+                        ref_metrics,
+                        args.gate_games,
+                    )
+                except Exception as exc:
+                    print(f"ref gate iter {it}: failed ({exc}); continuing", flush=True)
     finally:
         if tablebase is not None:
             tablebase.close()

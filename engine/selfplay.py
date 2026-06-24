@@ -107,7 +107,7 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
         policy = np.zeros(POLICY_SIZE, dtype=np.float32)
         for idx, p in zip(result.indices, improved):
             policy[idx] = p
-        samples.append(Sample(board_to_planes(board), policy, board.turn))
+        samples.append(Sample(board_to_planes(board).astype(np.float16), policy.astype(np.float16), board.turn))
 
         resign_enabled = cfg.train.resign_plies > 0 and cfg.train.resign_threshold >= -1.0
         if resign_enabled and move_count >= cfg.train.resign_min_moves:

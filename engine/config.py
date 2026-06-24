@@ -69,6 +69,7 @@ class TrainConfig:
     fast_mate_bonus: float = 0.0    # >0 rewards quicker checkmates
     sims_per_move: int = 100        # fixed MCTS sims/move (no ramp)
     checkpoint_dir: str = "checkpoints"
+    grad_clip_norm: float = 10.0
 
 
 @dataclass

@@ -83,3 +83,5 @@ def test_sample_shard_atomic_round_trip(tmp_path) -> None:
     loaded = _load_sample_shard(str(path))
     assert len(loaded) == 2
     assert loaded[0].value == pytest.approx(0.5)
+    assert loaded[0].planes.dtype == np.float16
+    assert loaded[0].policy.dtype == np.float16
