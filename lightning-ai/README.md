@@ -17,7 +17,9 @@ Upload (or create) this structure in your Lightning AI studio:
 parent/
 ├── immortalite-zero/     # git clone
 │   └── lightning-ai/
-│       └── train.ipynb   # open and run this
+│       ├── train.ipynb   # notebook workflow
+│       ├── run_train.py  # background-friendly training script
+│       └── run_gate.py   # manual checkpoint gate script
 ├── results/              # manual upload — checkpoints + metrics
 │   ├── latest.pt
 │   ├── metrics.csv
@@ -53,7 +55,45 @@ python scripts/download_syzygy345.py --out syzygy345
    as `immortalite-zero/`, not inside it).
 4. Open `immortalite-zero/lightning-ai/train.ipynb`.
 
-## Step 2 — Run the cells top to bottom
+## Step 2 — Train (notebook or script)
+
+Lightning AI disconnects after ~4 hours. **Prefer the script** so training keeps
+running after you close the browser tab.
+
+### Option A — Background script (recommended)
+
+```bash
+cd immortalite-zero
+pip install -q python-chess numpy tqdm
+
+# Edit TRAIN settings in lightning-ai/run_train.py if needed, then:
+nohup python lightning-ai/run_train.py > ../results/train.log 2>&1 &
+
+# Watch progress
+tail -f ../results/train.log
+```
+
+Training writes to `../results/` (`latest.pt`, `metrics.csv`, …) every iteration.
+Re-upload `results/` before each new studio session to resume.
+
+### Option B — Notebook
+
+Open `lightning-ai/train.ipynb` and run cells top to bottom. **Keep the browser
+tab open** — the kernel stops if you close it.
+
+### Manual gate (script)
+
+Edit `CHECKPOINT_A` and `CHECKPOINT_B` at the top of `lightning-ai/run_gate.py`
+(use an int iteration or `"latest"`), then:
+
+```bash
+cd immortalite-zero
+python lightning-ai/run_gate.py
+```
+
+Results append to `../results/metrics_gates.csv`.
+
+## Step 3 — Notebook cells (if using train.ipynb)
 
 | Cell | What it does |
 |------|--------------|
@@ -65,7 +105,7 @@ python scripts/download_syzygy345.py --out syzygy345
 | 6 | Optional manual gate between any two checkpoints. |
 | 7 | Plots metrics + gate winrates from `results/metrics.csv`. |
 
-## Step 3 — Know what "good" looks like
+## Step 4 — Know what "good" looks like
 
 Each training line looks like:
 
@@ -77,7 +117,7 @@ iter  12 | sims 100 | games 128 | samples 5200 | buffer 40000 | policy_loss 1.85
 - **value_loss** should be meaningful (not ~0).
 - The **metrics plot** (cell 7) is the clearest signal.
 
-## Step 4 — Sessions and resuming
+## Step 5 — Sessions and resuming
 
 When a studio session ends, download the updated `results/` folder.
 
@@ -89,7 +129,7 @@ When a studio session ends, download the updated `results/` folder.
 Numbered snapshots `ckpt_iter_0000.pt`, `ckpt_iter_0010.pt`, … are kept every
 10 iterations (`save_every` in cell 5).
 
-## Step 5 — Use the trained engine locally
+## Step 6 — Use the trained engine locally
 
 1. Download `latest.pt` from your uploaded `results/` folder.
 2. Verify encoding compatibility:
