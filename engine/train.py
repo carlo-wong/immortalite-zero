@@ -791,6 +791,11 @@ def main() -> None:
         tablebase = chess.syzygy.open_tablebase(cfg.train.syzygy_path)
         print(f"syzygy: enabled ({cfg.train.syzygy_path})")
 
+    if args.selfplay_workers == 1:
+        stale_worker_weights = os.path.join(cfg.train.checkpoint_dir, "_worker_net.pt")
+        if os.path.isfile(stale_worker_weights):
+            os.remove(stale_worker_weights)
+
     try:
         for local_it in range(args.iterations):
             it = start_iter + local_it
@@ -820,12 +825,11 @@ def main() -> None:
                 game_bar.set_postfix(moves=len(game.samples), buffer=len(buffer))
                 game_bar.update(1)
 
-            worker_weights_path = os.path.join(cfg.train.checkpoint_dir, "_worker_net.pt")
-            os.makedirs(cfg.train.checkpoint_dir or ".", exist_ok=True)
-            model_module = getattr(net, "_orig_mod", net)
-            torch.save({"model": model_module.state_dict()}, worker_weights_path)
-
             if args.selfplay_workers > 1:
+                worker_weights_path = os.path.join(cfg.train.checkpoint_dir, "_worker_net.pt")
+                os.makedirs(cfg.train.checkpoint_dir or ".", exist_ok=True)
+                model_module = getattr(net, "_orig_mod", net)
+                torch.save({"model": model_module.state_dict()}, worker_weights_path)
                 parallel_samples, parallel_terms, parallel_lengths, parallel_outcomes = (
                     play_games_parallel(
                         cfg,
