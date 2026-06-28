@@ -71,8 +71,8 @@ python -m uvicorn server.app:app --port 8000
 
 | Platform | Path | Notes |
 |----------|------|-------|
-| **Google Colab** | `colab/train.ipynb` | Free GPU, Drive checkpoints, 2 parallel workers |
-| **Lightning AI** | `lightning-ai/run_train.py` | ~4h sessions, 4 workers, background-friendly |
+| **Google Colab** | `colab/train.ipynb` | Free GPU, Drive checkpoints, 1 GPU worker |
+| **Lightning AI** | `lightning-ai/run_train.py` | ~4h sessions, background-friendly |
 | **Local CPU** | `engine.train` | `--light` preset for smoke tests |
 
 See `colab/README.md` and `lightning-ai/README.md` for full workflows.
@@ -84,10 +84,10 @@ These override the `--gpu` preset when passed on the CLI. Resume always keeps th
 | Setting | Colab | Lightning |
 |---------|-------|-----------|
 | Games / iter | 256 | 256 |
-| Train steps / iter | 1600 | 1600 |
+| Train steps / iter | 800 | 800 |
 | MCTS sims / move | 100 | 100 |
-| Concurrency | 128 | 128 |
-| Self-play workers | 2 | 4 |
+| Concurrency | 256 | 256 |
+| Self-play workers | 1 | 1 |
 | Replay buffer / window | 200k | 200k |
 | Draw penalty | 1/3 | 1/3 |
 | Resign | off | off |
@@ -129,7 +129,7 @@ Options: `Simulations`, `MultiPV`.
 ## Design notes
 
 - **Strength:** a light net trained via pure self-play on free GPUs lands around club-amateur level — a characterful analysis tool, not a Stockfish rival.
-- **Throughput:** parallel workers duplicate the net in subprocesses; each worker batches all its games at `concurrency = games_per_worker`.
+- **Throughput:** on one GPU, use `selfplay_workers: 1` and set `concurrency` = `games` so MCTS batches at full width with `torch.compile` + FP16 in the main process. Multi-worker self-play duplicates CUDA contexts and is slower on a single GPU.
 - **Research baked in:** Gumbel completed-Q policy targets, search draw-contempt, SPRT gating, Syzygy adjudication.
 
 ## Training history

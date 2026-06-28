@@ -61,13 +61,14 @@ Writes `latest.pt`, `metrics.csv`, shards every iteration to `../results/`.
 
 ### Current `TRAIN` defaults
 
-Same as Colab except **`selfplay_workers: 4`** (Lightning hosts tend to have more CPU cores). See `colab/README.md` for the full parameter table.
+Same as Colab: **single GPU worker**, **`concurrency` = `games`** for full batch width. See `colab/README.md` for the full parameter table.
 
 | Key | Lightning value |
 |-----|-----------------|
 | `games` | 256 |
-| `train_steps` | 1600 |
-| `selfplay_workers` | 4 |
+| `train_steps` | 800 |
+| `concurrency` | 256 |
+| `selfplay_workers` | 1 |
 | `gate_games` | 512 (SPRT cap) |
 | `lr` / `lr_min` | 2.5e-4 (constant) |
 
@@ -126,7 +127,7 @@ Open **http://localhost:8000/app/**
 | No CUDA | Select GPU machine, re-run |
 | Syzygy incomplete | All 145 `.rtbw` in `syzygy345/` sibling folder |
 | `results/` not found | Sibling of repo, not inside it |
-| Slow self-play | Raise `selfplay_workers` (watch CPU); ensure `concurrency` 128 |
+| Slow self-play | Keep `selfplay_workers: 1` on one GPU; raise `concurrency` to match `games` |
 | OOM | Lower `games` and `concurrency` together |
 
 Recipe history: **[TRAINING_CHANGELOG.md](../TRAINING_CHANGELOG.md)**

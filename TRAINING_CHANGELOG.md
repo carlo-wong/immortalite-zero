@@ -13,13 +13,9 @@ Gates run every 20 iters vs the checkpoint **20 iters ago**. Edit only the `TRAI
 | **61**† | **128** | **800** | 128 | 1 | 200k | 64 | (cosine) | scale games + steps with concurrency |
 | **80** | 128 | 800 | 128 | 1 | 200k | 64 | **~6e-4 flat** | resume from `ckpt_iter_0080` |
 | **100** | 128 | 800 | 128 | 1 | 200k | 64 | **2.5e-4 flat** | consolidate after hot LR |
-| **120** | **256** | **1600** | 128 | **2** / **4**‡ | 200k | **512 SPRT** | 2.5e-4 flat | parallel self-play; Lightning uses 4 workers |
+| **120** | **256** | **800** | **256** | **1** | 200k | **512 SPRT** | 2.5e-4 flat | single GPU batch; concurrency=games |
 
-† First logged iter with 128 games / 800 steps in `metrics.csv` is **61** (resume timing). Treat **60** as the intended boundary when preparing the recipe.
-
-‡ Colab **2** workers, Lightning **4**.
-
-**Current row:** start **120** — 256×1600, SPRT cap 512 (H₀ 0 Elo / H₁ +25 Elo), LR 2.5e-4 constant. Rotate old `metrics_gates.csv` if upgrading from pre-SPRT runs.
+**Current row:** start **120** — 256 games, concurrency 256, 1 worker, SPRT cap 512, LR 2.5e-4 constant. Multi-worker self-play reverted (slower on one GPU).
 
 Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net only with a new `--checkpoint-dir`.
 
@@ -69,13 +65,14 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 - Same games, steps, replay, and 64-game winrate gates.
 - Policy was still improving but loss/noise suggested the hotter 6e-4 block had run its course.
 
-### Iter 120 — parallel self-play + SPRT gates (current)
+### Iter 120 — scale-up + SPRT gates (current)
 
-- **256 games / 1600 train steps** — double data per iter while keeping ~6× reuse.
-- **`--selfplay-workers`**: 2 on Colab, 4 on Lightning (subprocess self-play, spawn pool).
+- **256 games / 800 train steps** — double games vs 128/800 block; ~3× sample reuse at batch 128.
+- **`selfplay_workers: 1`** — one GPU owner with `torch.compile` + FP16; multi-worker subprocess self-play reverted (contended CUDA on single GPU).
+- **`concurrency: 256`** — matches games so every active position batches in one `evaluate_batch` call.
 - **SPRT gates** replace winrate thresholds: cap **512 games**, early-stop when H₀ (0 Elo) or H₁ (+25 Elo) is decided; logs PASS / FAIL / INCONCLUSIVE. Not enforced yet (no auto-reject).
 - `metrics_gates.csv` adds `llr`, `sprt_decision`, `games_played`, `elo0`, `elo1` — delete old CSV before first run on this recipe.
-- Replay 200k now holds ~**6 iters** of history at 256 games (fresher than before).
+- Replay 200k holds ~**6 iters** of history at 256 games.
 - LR unchanged at 2.5e-4; draw 1/3; resign off; gate sims 100; exploration moves 20.
 
 Last updated: 2026-06-28.
