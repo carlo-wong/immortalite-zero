@@ -27,7 +27,8 @@ from tqdm.auto import tqdm
 from .config import Config, NetConfig
 from .encoding import ENCODING_VERSION
 from .network import ChessNet, NetEvaluator
-from .selfplay import GameResult, Sample, play_game_gen, play_games_batched
+from .sprt import ALPHA, BETA, ELO0, ELO1, sprt_bounds, sprt_decision, sprt_llr, sprt_verdict_label
+from .selfplay import GameResult, Sample, play_game_gen, play_games_batched, play_games_parallel
 
 _SAMPLE_SHARD_PREFIX = "samples_iter_"
 _SAMPLE_SHARD_SUFFIX = ".npz"
@@ -273,19 +274,25 @@ def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = os.path.join(ckpt_dir, "metrics_gates.csv")
     new = not os.path.exists(path)
+    games_played = int(metrics.get("games_played", games))
+    llr = metrics.get("llr", float("nan"))
+    sprt_decision_val = metrics.get("sprt_decision", "")
+    elo0 = metrics.get("elo0", float("nan"))
+    elo1 = metrics.get("elo1", float("nan"))
     with open(path, "a", encoding="utf-8") as f:
         if new:
             f.write(
                 "iter,prev_iter,winrate,wins_as_white,wins_as_black,"
                 "losses_as_white,losses_as_black,draws_as_white,draws_as_black,"
-                "mean_game_len,games,terminations\n"
+                "mean_game_len,games,terminations,llr,sprt_decision,games_played,elo0,elo1\n"
             )
         f.write(
             f"{it},{prev_it},{metrics['winrate']:.6f},"
             f"{metrics['wins_as_white']},{metrics['wins_as_black']},"
             f"{metrics['losses_as_white']},{metrics['losses_as_black']},"
             f"{metrics['draws_as_white']},{metrics['draws_as_black']},"
-            f"{metrics['mean_game_len']:.2f},{games},{metrics['terminations']}\n"
+            f"{metrics['mean_game_len']:.2f},{games},{metrics['terminations']},"
+            f"{llr:.6f},{sprt_decision_val},{games_played},{elo0:.6f},{elo1:.6f}\n"
         )
 
 
@@ -311,7 +318,13 @@ def _snapshot_at_iter(ckpt_dir: str, iteration: int) -> str | None:
 def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
                n_games: int, sims: int, device: str,
                exploration_moves: int = 10,
-               tablebase: chess.syzygy.Tablebase | None = None) -> dict:
+               tablebase: chess.syzygy.Tablebase | None = None,
+               sprt: bool = False,
+               sprt_elo0: float = ELO0,
+               sprt_elo1: float = ELO1,
+               sprt_alpha: float = ALPHA,
+               sprt_beta: float = BETA,
+               ) -> dict:
     if n_games <= 0:
         return {
             "winrate": float("nan"),
@@ -322,7 +335,14 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             "draws_as_white": 0,
             "draws_as_black": 0,
             "mean_game_len": 0.0,
-            "terminations": ""
+            "terminations": "",
+            "llr": float("nan"),
+            "sprt_decision": "continue",
+            "sprt_lower": float("nan"),
+            "sprt_upper": float("nan"),
+            "games_played": 0,
+            "elo0": sprt_elo0,
+            "elo1": sprt_elo1,
         }
 
     match_cfg = deepcopy(cfg)
@@ -376,9 +396,13 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     active: list[tuple[object, chess.Board, bool]] = []
     launched = 0
     completed = 0
+    sprt_lower, sprt_upper = sprt_bounds(sprt_alpha, sprt_beta) if sprt else (float("nan"), float("nan"))
+    sprt_decided = False
+    current_llr = 0.0
+    current_sprt_decision = "continue"
 
-    while completed < n_games:
-        while launched < n_games and len(active) < concurrency:
+    while active or (launched < n_games and not sprt_decided):
+        while launched < n_games and len(active) < concurrency and not sprt_decided:
             a_is_white = (launched % 2 == 0)
             gen = play_game_gen(
                 match_cfg,
@@ -389,6 +413,9 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             )
             active.append((gen, next(gen), a_is_white))
             launched += 1
+
+        if not active:
+            break
 
         a_indices: list[int] = []
         a_boards: list[chess.Board] = []
@@ -424,6 +451,17 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
                 completed += 1
                 gate_bar.update(1)
                 gate_bar.set_postfix(score=f"{score / completed:.3f}")
+                if sprt:
+                    total_wins = wins_w + wins_b
+                    total_losses = losses_w + losses_b
+                    total_draws = draws_w + draws_b
+                    current_llr = sprt_llr(
+                        total_wins, total_draws, total_losses,
+                        elo0=sprt_elo0, elo1=sprt_elo1,
+                    )
+                    current_sprt_decision = sprt_decision(current_llr, sprt_lower, sprt_upper)
+                    if current_sprt_decision != "continue":
+                        sprt_decided = True
         active = next_active
     gate_bar.close()
 
@@ -431,9 +469,11 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     total_losses = losses_w + losses_b
     total_draws = draws_w + draws_b
     terminations_str = ";".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
+    games_played = completed if completed > 0 else 0
+    winrate = score / games_played if games_played > 0 else float("nan")
 
     return {
-        "winrate": score / n_games,
+        "winrate": winrate,
         "wins_as_white": wins_w,
         "wins_as_black": wins_b,
         "losses_as_white": losses_w,
@@ -441,7 +481,14 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
         "draws_as_white": draws_w,
         "draws_as_black": draws_b,
         "mean_game_len": float(np.mean(game_lengths)) if game_lengths else 0.0,
-        "terminations": terminations_str
+        "terminations": terminations_str,
+        "llr": current_llr if sprt else float("nan"),
+        "sprt_decision": current_sprt_decision if sprt else "continue",
+        "sprt_lower": sprt_lower,
+        "sprt_upper": sprt_upper,
+        "games_played": games_played,
+        "elo0": sprt_elo0 if sprt else float("nan"),
+        "elo1": sprt_elo1 if sprt else float("nan"),
     }
 
 
@@ -579,6 +626,8 @@ def main() -> None:
                         help="also save a numbered checkpoint every N iterations (0 = off)")
     parser.add_argument("--concurrency", type=int, default=None,
                         help="concurrent self-play games to batch on GPU")
+    parser.add_argument("--selfplay-workers", type=int, default=1,
+                        help="parallel self-play worker processes (spawn); 1 = single process")
     parser.add_argument("--replay-window", type=int, default=None,
                         help="max persisted replay samples kept on disk")
     parser.add_argument("--batch-size", type=int, default=None,
@@ -615,6 +664,8 @@ def main() -> None:
         torch.set_float32_matmul_precision("high")
     if args.gate_sims is not None and args.gate_sims <= 0:
         raise ValueError("--gate-sims must be >= 1")
+    if args.selfplay_workers < 1:
+        raise ValueError("--selfplay-workers must be >= 1")
 
     cfg = Config()
     if args.checkpoint_dir:
@@ -769,15 +820,41 @@ def main() -> None:
                 game_bar.set_postfix(moves=len(game.samples), buffer=len(buffer))
                 game_bar.update(1)
 
-            play_games_batched(
-                evaluator,
-                cfg,
-                simulations=sims,
-                num_games=n_games,
-                concurrency=cfg.train.selfplay_concurrency,
-                on_game_finished=_on_game,
-                tablebase=tablebase,
-            )
+            worker_weights_path = os.path.join(cfg.train.checkpoint_dir, "_worker_net.pt")
+            os.makedirs(cfg.train.checkpoint_dir or ".", exist_ok=True)
+            model_module = getattr(net, "_orig_mod", net)
+            torch.save({"model": model_module.state_dict()}, worker_weights_path)
+
+            if args.selfplay_workers > 1:
+                parallel_samples, parallel_terms, parallel_lengths, parallel_outcomes = (
+                    play_games_parallel(
+                        cfg,
+                        cfg.net,
+                        worker_weights_path,
+                        simulations=sims,
+                        num_games=n_games,
+                        workers=args.selfplay_workers,
+                        device=args.device,
+                        syzygy_path=cfg.train.syzygy_path,
+                    )
+                )
+                buffer.extend(parallel_samples)
+                iteration_samples = parallel_samples
+                new_samples = len(parallel_samples)
+                termination_counts = Counter(parallel_terms)
+                game_lengths = parallel_lengths
+                game_outcomes = parallel_outcomes
+                game_bar.update(n_games)
+            else:
+                play_games_batched(
+                    evaluator,
+                    cfg,
+                    simulations=sims,
+                    num_games=n_games,
+                    concurrency=cfg.train.selfplay_concurrency,
+                    on_game_finished=_on_game,
+                    tablebase=tablebase,
+                )
             game_bar.close()
             selfplay_dt = time.time() - t0
 
@@ -921,14 +998,23 @@ def main() -> None:
                                     device=args.device,
                                     exploration_moves=args.gate_exploration_moves,
                                     tablebase=tablebase,
+                                    sprt=True,
+                                    sprt_elo0=ELO0,
+                                    sprt_elo1=ELO1,
+                                    sprt_alpha=ALPHA,
+                                    sprt_beta=BETA,
                                 )
                                 winrate_vs_prev = float(gate_metrics["winrate"])
                                 total_wins = gate_metrics["wins_as_white"] + gate_metrics["wins_as_black"]
                                 total_losses = gate_metrics["losses_as_white"] + gate_metrics["losses_as_black"]
                                 total_draws = gate_metrics["draws_as_white"] + gate_metrics["draws_as_black"]
+                                sprt_label = sprt_verdict_label(gate_metrics["sprt_decision"])
+                                games_played = int(gate_metrics["games_played"])
                                 print(
                                     f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
-                                    f"-> {gate_metrics['winrate']:.3f} (Wins: {total_wins}, Losses: {total_losses}, Draws: {total_draws})"
+                                    f"-> {gate_metrics['winrate']:.3f} (Wins: {total_wins}, Losses: {total_losses}, "
+                                    f"Draws: {total_draws}, games: {games_played}) "
+                                    f"SPRT {sprt_label} (llr={gate_metrics['llr']:.2f})"
                                 )
                                 _log_gate_metrics(
                                     cfg.train.checkpoint_dir,

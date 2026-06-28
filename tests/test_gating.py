@@ -86,7 +86,12 @@ def test_log_gate_metrics_writes_correct_csv() -> None:
             "draws_as_white": 2,
             "draws_as_black": 2,
             "mean_game_len": 120.5,
-            "terminations": "checkmate:16;threefold_repetition:4"
+            "terminations": "checkmate:16;threefold_repetition:4",
+            "llr": 2.5,
+            "sprt_decision": "accept",
+            "games_played": 20,
+            "elo0": 0.0,
+            "elo1": 25.0,
         }
 
         _log_gate_metrics(tmpdir, it, prev_it, metrics, games)
@@ -99,7 +104,8 @@ def test_log_gate_metrics_writes_correct_csv() -> None:
         expected_cols = [
             "iter", "prev_iter", "winrate", "wins_as_white", "wins_as_black",
             "losses_as_white", "losses_as_black", "draws_as_white", "draws_as_black",
-            "mean_game_len", "games", "terminations"
+            "mean_game_len", "games", "terminations",
+            "llr", "sprt_decision", "games_played", "elo0", "elo1",
         ]
         assert list(df.columns) == expected_cols
 
@@ -151,6 +157,11 @@ def test_log_metrics_winrate_vs_prev_after_gate() -> None:
             "draws_as_black": 1,
             "mean_game_len": 90.0,
             "terminations": "checkmate:8;stalemate:2",
+            "llr": 0.5,
+            "sprt_decision": "continue",
+            "games_played": 10,
+            "elo0": 0.0,
+            "elo1": 25.0,
         }
         it = 10
         _log_metrics(

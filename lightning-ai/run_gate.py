@@ -16,7 +16,7 @@ import sys
 CHECKPOINT_A: int | str = 20
 CHECKPOINT_B: int | str = 0
 
-GATE_GAMES = 64
+GATE_GAMES = 512
 GATE_SIMS = 100
 GATE_EXPLORATION_MOVES = 20
 CONCURRENCY = 128
@@ -52,6 +52,7 @@ def main() -> None:
     from engine.config import Config, NetConfig
     from engine.encoding import ENCODING_VERSION
     from engine.network import ChessNet
+    from engine.sprt import ALPHA, BETA, ELO0, ELO1, sprt_verdict_label
     from engine.train import _load_matching_state_dict, _log_gate_metrics, play_match
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -86,7 +87,10 @@ def main() -> None:
     net_a, state_a = load_gate_net(path_a)
     print(f"Loading B ({label_b}): {path_b}")
     net_b, state_b = load_gate_net(path_b)
-    print(f"\nMatch: {label_a} vs {label_b} ({GATE_GAMES} games, {GATE_SIMS} sims)...")
+    print(
+        f"\nMatch: {label_a} vs {label_b} "
+        f"(SPRT cap {GATE_GAMES} games, {GATE_SIMS} sims, elo0={ELO0}, elo1={ELO1})..."
+    )
 
     metrics = play_match(
         net_a, net_b, cfg,
@@ -95,6 +99,11 @@ def main() -> None:
         device=device,
         exploration_moves=GATE_EXPLORATION_MOVES,
         tablebase=tablebase,
+        sprt=True,
+        sprt_elo0=ELO0,
+        sprt_elo1=ELO1,
+        sprt_alpha=ALPHA,
+        sprt_beta=BETA,
     )
     tablebase.close()
 
@@ -107,21 +116,19 @@ def main() -> None:
     losses = metrics["losses_as_white"] + metrics["losses_as_black"]
     draws = metrics["draws_as_white"] + metrics["draws_as_black"]
     wdl = f"+{wins} ={draws} -{losses}"
+    sprt_label = sprt_verdict_label(metrics["sprt_decision"])
+    games_played = int(metrics["games_played"])
 
     print("\n" + "=" * 40)
     print("MATCH COMPLETED")
-    print(f"{label_a} score vs {label_b}: {winrate:.3f} [{wdl}]")
+    print(f"{label_a} score vs {label_b}: {winrate:.3f} [{wdl}] ({games_played} games)")
     print(f"  As White: W {metrics['wins_as_white']} L {metrics['losses_as_white']} D {metrics['draws_as_white']}")
     print(f"  As Black: W {metrics['wins_as_black']} L {metrics['losses_as_black']} D {metrics['draws_as_black']}")
     print(f"  Mean game length: {metrics['mean_game_len']:.1f} plies")
     print(f"  Terminations: {metrics['terminations']}")
+    print(f"  SPRT: {sprt_label} (llr={metrics['llr']:.2f}, decision={metrics['sprt_decision']})")
     print(f"  Logged to: {os.path.join(paths.ckpt_dir, 'metrics_gates.csv')}")
-    if winrate > 0.55:
-        print(f"Result: {label_a} PASSED (stronger than {label_b})")
-    elif winrate < 0.45:
-        print(f"Result: {label_a} significantly WEAKER than {label_b}")
-    else:
-        print(f"Result: {label_a} and {label_b} roughly equal")
+    print(f"Result: {label_a} {sprt_label} vs {label_b}")
     print("=" * 40)
 
 
