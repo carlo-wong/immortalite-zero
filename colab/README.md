@@ -1,128 +1,129 @@
 # Training Immortalite Zero on Google Colab
 
-A step-by-step guide to training the engine on a free Colab GPU. No prior ML
-experience needed — just follow the cells in order.
+Step-by-step guide for the free Colab GPU workflow. Open `colab/train.ipynb` and run cells in order.
 
-> **What you're doing:** Colab gives you a free cloud GPU. You'll clone the repo
-> into Colab, run self-play training there, and save checkpoints to your Google
-> Drive so nothing is lost when Colab disconnects. Then you download the trained
-> file and run the analysis GUI on your own machine.
+> **What you're doing:** clone the repo in Colab, run self-play training on a free GPU, save checkpoints to Google Drive every iteration, and download `latest.pt` for local analysis.
 
 ---
 
 ## Before you start
 
-- A **Google account** (for Colab + Drive).
-- The code pushed to GitHub (already done: `github.com/carlo-wong/immortalite-zero`).
-- Whenever you change the engine locally, `git push` so Colab can pull it.
+- A **Google account** (Colab + Drive).
+- Code on GitHub: `github.com/carlo-wong/immortalite-zero` — `git push` after local changes so Colab can `git pull`.
+- **Syzygy:** cell 5 copies `syzygy345/` from Drive if present, or downloads once into your checkpoint folder.
 
 ---
 
-## Step 1 — Open the notebook in Colab
-
-Click this link (it opens the notebook straight from GitHub):
+## Step 1 — Open the notebook
 
 **https://colab.research.google.com/github/carlo-wong/immortalite-zero/blob/main/colab/train.ipynb**
 
-Or: go to [colab.research.google.com](https://colab.research.google.com) →
-**File → Open notebook → GitHub** → paste `carlo-wong/immortalite-zero`.
+Or: [colab.research.google.com](https://colab.research.google.com) → **File → Open notebook → GitHub** → `carlo-wong/immortalite-zero`.
 
-## Step 2 — Turn on the GPU
+## Step 2 — Enable GPU
 
-Top menu: **Runtime → Change runtime type → Hardware accelerator → GPU → Save**.
+**Runtime → Change runtime type → Hardware accelerator → GPU → Save.**
 
-This is essential — without it, training runs on a slow CPU.
-
-## Step 3 — Run the cells top to bottom
-
-Press **Shift+Enter** on each cell, or **Runtime → Run all**. Here's what each does:
+## Step 3 — Run cells
 
 | Cell | What it does |
 |------|--------------|
-| 1 | Clones the repo (and `git pull`s the latest each time you re-run). |
-| 2 | Installs `python-chess` (PyTorch is already on Colab). |
-| 3 | Mounts Drive → `MyDrive/immortalite_zero_checkpoints`. |
-| 4 | Confirms GPU + sets `--gpu` preset. |
-| 5 | Syzygy tablebases: copies from `CKPT_DIR/syzygy345/` on Drive if present, else downloads once and caches there. |
-| 6 | **Config + train** — flat 100 sims, gates every 20 iters. `resume: True` by default (auto-continues after disconnect). |
-| 7 | Optional manual gate between any two checkpoints (same sims/Syzygy as training). |
-| 8 | Plots metrics + gate winrates. |
+| 1 | Clone repo + `git pull` |
+| 2 | Install `python-chess` |
+| 3 | Mount Drive → `MyDrive/immortalite_zero_checkpoints` |
+| 4 | Confirm GPU, set `--gpu` preset |
+| 5 | Syzygy tablebases (Drive cache or download) |
+| 6 | **Train** — edit `TRAIN` dict only; `resume: True` by default |
+| 7 | Optional **manual gate** (SPRT, same settings as auto-gate) |
+| 8 | Plot `metrics.csv` + gate results |
 
-## Step 4 — Know what "good" looks like
+## Step 4 — Current `TRAIN` defaults (cell 6)
 
-Each training line looks like:
+| Key | Value | Notes |
+|-----|-------|-------|
+| `games` | 256 | matches full GPU batch width |
+| `train_steps` | 1600 | ~6× sample reuse at 256 games |
+| `concurrency` | 128 | batched MCTS eval width |
+| `selfplay_workers` | 2 | parallel subprocess self-play |
+| `sims` / `gate_sims` | 100 | flat sims/move |
+| `replay_buffer` / `replay_window` | 200k | ~6 iters of history at 256 games |
+| `draw_penalty` | 1/3 | football 3-1-0 shaping |
+| `resign` | False | no self-play resignation |
+| `lr` / `lr_min` | 2.5e-4 | held constant (`lr == lr_min`) |
+| `lr_total_iters` | 1000 | cosine span (inactive when lr == lr_min) |
+| `gate_every` | 20 | vs checkpoint 20 iters ago |
+| `gate_games` | 512 | SPRT **cap** (early-stops when decisive) |
+| `gate_exploration_moves` | 20 | sample first 20 plies in gates |
+| `save_every` | 10 | numbered snapshots |
+| `resume` | True | loads `latest.pt` automatically |
+
+When gates plateau (~15–20 iters flat), drop `lr` and `lr_min` together (e.g. to `6e-5`) and keep resuming — do not rewind iterations.
+
+## Step 5 — What good looks like
 
 ```
-iter  12 | sims 100 | games 64 | samples 5200 | buffer 40000 | policy_loss 1.85 | value_loss 0.21 | 180.0s
+iter  40 | sims 100 | games 256 | samples 18500 | buffer 200000 | policy_loss 2.1 | value_loss 0.4 | lr 2.500e-04 | 420.0s
+gate iter 40: current vs ckpt_iter_0020.pt -> 0.580 (Wins: 28, ...) SPRT PASS (llr=3.42)
 ```
 
-- **policy_loss** should trend **down** over time (the net is learning which moves matter).
-- **value_loss** should be meaningful (not ~0) — that means games have real win/loss outcomes, not just timeouts.
-- The **metrics plot** (cell 8) is the clearest signal: a downward loss curve = it's improving.
+- **policy_loss** should trend down over many iterations (not every single iter).
+- **value_loss** should stay meaningful — games need real outcomes, not only max-move truncations.
+- **SPRT PASS** at a gate means significant improvement vs 20 iters ago; **INCONCLUSIVE** is normal on short runs.
+- Cell 8 plots are the clearest long-run signal.
 
-Strength emerges slowly. Pure self-play on a free GPU is a club-level engine at
-best — the goal here is steady improvement, not Stockfish.
+Pure self-play on a free GPU targets club-level strength, not Stockfish.
 
-## Step 5 — Disconnects and resuming (important)
+## Step 6 — Disconnects and resuming
 
-Free Colab disconnects after a while (idle, or ~12h max). **This is fine:**
+Checkpoints save to Drive **every iteration** (`latest.pt`, `metrics.csv`, sample shards).
 
-- Checkpoints are saved to **Google Drive every iteration**, so you never lose more than one iteration.
+| Goal | Action |
+|------|--------|
+| **Resume** after disconnect | Re-run cells 1→6. `resume: True` loads `latest.pt`. |
+| **Fresh run** | Empty Drive checkpoint folder, re-run 1→6. |
+| **Compare checkpoints** | Use cell 7 manual gate or download `ckpt_iter_XXXX.pt`. |
 
-| Goal | What to do |
-|------|------------|
-| **Resume** after disconnect | Re-run cells 1→6 (default). `resume: True` loads `latest.pt` automatically. |
-| **Fresh run** (clean slate) | Empty the Drive checkpoint folder, then re-run cells 1→6. Starts at iter 0 when no `latest.pt` exists. |
+Numbered snapshots: `ckpt_iter_0000.pt`, `ckpt_iter_0010.pt`, … every `save_every` iters.
 
-**Checkpoint history:**
-In addition, a numbered snapshot `ckpt_iter_0000.pt`, `ckpt_iter_0005.pt`, ... is
-kept every 10 iterations so you can compare or roll back to earlier versions.
-Change the interval with `save_every` in cell 6 (`0` disables numbered snapshots).
+**metrics_gates.csv:** if you upgraded from an older recipe, delete or rotate the file — the header now includes `llr`, `sprt_decision`, `games_played`, `elo0`, `elo1`.
 
-Tips to stay connected longer: keep the browser tab open and interact
-occasionally; don't close your laptop lid.
-
-## Step 6 — Updating the code later
-
-When you improve the engine on your machine:
+## Step 7 — Update code from your machine
 
 ```bash
-git add -A
-git commit -m "your change"
-git push
+git add -A && git commit -m "your change" && git push
 ```
 
-Then in Colab just **re-run cell 1** (it does `git pull`) and continue training.
+In Colab, re-run **cell 1** (`git pull`) and continue training.
 
-## Step 7 — Use the trained engine locally
+## Step 8 — Use locally
 
-1. In Google Drive, open `immortalite_zero_checkpoints` and **download `latest.pt`**.
-2. Put it in your local `checkpoints/` folder (or anywhere).
-3. Verify encoding compatibility before starting the server:
+1. Download `latest.pt` from Drive.
+2. Verify encoding:
 
 ```bash
 python -m engine.inspect_encoding checkpoints/latest.pt
 ```
 
-4. Start the analysis server pointing at it:
+3. Start server:
 
 ```bash
-# Windows (PowerShell)
 $env:IMMORTALITE_ZERO_CHECKPOINT="checkpoints\latest.pt"
 python -m uvicorn server.app:app --port 8000
 ```
 
-5. Open **http://localhost:8000/app/** and analyze.
-
-> Re-download `latest.pt` and restart the server whenever you want the newest
-> trained weights.
+4. Open **http://localhost:8000/app/**
 
 ---
 
 ## Troubleshooting
 
-- **"CUDA available: False"** → you skipped Step 2. Set the runtime to GPU and re-run.
-- **Drive popup didn't appear / auth error** → re-run cell 3 and complete the Google login.
-- **Training seems stuck** → it prints one line per iteration (can be 1–3 min each on the GPU preset). Give it a few minutes; check the loss plot.
-- **Want it faster / a bigger net** → edit the `--gpu` preset values in `engine/train.py`, push, and `git pull` in Colab.
-- **Out of memory** → lower `filters`/`blocks` or `batch_size` in `engine/config.py` (or the `--gpu` preset), push, pull, re-run.
+| Problem | Fix |
+|---------|-----|
+| `CUDA available: False` | Step 2 — set GPU runtime |
+| Drive auth failed | Re-run cell 3 |
+| Training "stuck" | One iter can take several minutes at 256 games; watch `metrics.csv` |
+| OOM | Lower `games` / `concurrency` together, or reduce net in checkpoint (fresh start only) |
+| SPRT always INCONCLUSIVE | Normal early; need more gate games or stronger signal |
+| Old gate CSV garbled | Delete `metrics_gates.csv` and let it recreate |
+
+Recipe history: **[TRAINING_CHANGELOG.md](../TRAINING_CHANGELOG.md)**

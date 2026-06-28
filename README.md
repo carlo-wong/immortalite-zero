@@ -1,33 +1,46 @@
 # Immortalite Zero
 
-A **lightweight, self-play chess engine** in the AlphaZero family (neural network + MCTS, *not* brute-force search), tuned to play **beautiful-but-sound** chess — sacrifices, attacks, tactics, and surprising "alien" moves — wrapped in a Lichess-style web analysis tool.
+A **lightweight, self-play chess engine** in the AlphaZero family (neural network + MCTS, not brute-force search), tuned for **decisive, attacking** play via draw shaping — wrapped in a Lichess-style web analysis tool and UCI front-end.
 
-It learns purely from self-play (no human games, no Stockfish). Optional human-game pretraining is on the roadmap for extra strength.
+It learns purely from self-play (no human games, no Stockfish). Optional human-game pretraining is on the roadmap.
 
 ## What it does
 
-- **Self-play training** with reward shaping that discourages dull draws (contempt) for more decisive, aggressive play.
-- **Beauty-bias move selection**: among moves that are *sound* (within a small win-probability window of the best move), it prefers the most sacrificial / attacking / tactical / surprising one. Soundness is a hard gate; beauty only breaks ties within it.
-- **Analysis GUI**: board, eval bar, best-move arrow, top-5 candidate lines (MultiPV), PGN/FEN import, move navigation.
-- **UCI-compatible** so the engine also runs in Arena, Cutechess, or Lichess's local-engine mode.
+- **Self-play training** with football-style draw shaping (`draw_penalty = 1/3`: a draw scores like one-third of a win).
+- **Parallel self-play** across worker processes (`--selfplay-workers`) for higher throughput on multi-core GPU hosts.
+- **SPRT strength gates** — sequential probability ratio tests with early stop (cap 512 games, H₀=0 Elo vs H₁=+25 Elo). Logs PASS / FAIL / INCONCLUSIVE; does not auto-reject checkpoints yet.
+- **Beauty-bias move selection** (optional): among sound moves, prefer sacrificial / attacking / tactical / surprising lines.
+- **Analysis GUI**: board, eval bar, best-move arrow, top-5 MultiPV lines, PGN/FEN import, move navigation.
+- **UCI-compatible** for Arena, Cutechess, or Lichess local-engine mode.
 
 ## Project layout
 
 ```
 engine/
-  encoding.py   board <-> tensor planes, move <-> index (AlphaZero 8x8x73 scheme)
-  network.py    lightweight ResNet, policy + value heads
-  mcts.py       PUCT search + Gumbel "completed-Q" improved policy
-  beauty.py     soundness gate + beauty scoring  <-- the heart of the project
-  analyze.py    high-level analysis API (eval, MultiPV, best vs beautiful)
-  selfplay.py   self-play game generation (reward shaping)
-  train.py      training loop with checkpointing (flat MCTS sims on GPU preset)
-  config.py     all tunables in one place
-uci/uci_engine.py   UCI front-end
-server/app.py       FastAPI /analyze backend + serves the GUI
-web/index.html      self-contained analysis GUI (no build step)
-colab/train.ipynb   Colab free-GPU training notebook
-tests/              encoding round-trip + end-to-end pipeline smoke tests
+  encoding.py   board ↔ tensor planes, move ↔ index (v2, 20 input planes)
+  network.py    ResNet policy + HL-Gauss value head
+  mcts.py       PUCT search + Gumbel completed-Q policy targets
+  beauty.py     soundness gate + beauty scoring (optional)
+  analyze.py    analysis API (eval, MultiPV)
+  selfplay.py   self-play + parallel workers (play_games_parallel)
+  sprt.py       Gaussian SPRT helpers for strength gates
+  train.py      training loop, play_match, checkpointing
+  config.py     defaults and tunables
+  inspect_encoding.py   shard/checkpoint encoding audit
+uci/uci_engine.py       UCI front-end
+server/app.py           FastAPI /analyze + serves GUI
+web/index.html          vanilla analysis GUI (no build step)
+web/react/              optional React + Chessground GUI (/app-react/)
+colab/train.ipynb       Google Colab training notebook
+colab/README.md         Colab step-by-step guide
+lightning-ai/
+  train.ipynb           Lightning AI notebook workflow
+  run_train.py          background training script (recommended)
+  run_gate.py           manual checkpoint gate script
+  README.md             Lightning AI guide
+scripts/download_syzygy345.py   one-time Syzygy download
+tests/                  encoding, pipeline, gating, SPRT, parallel split
+results/                local checkpoints + metrics (or sibling folder on Lightning)
 ```
 
 ## Quick start
@@ -35,69 +48,105 @@ tests/              encoding round-trip + end-to-end pipeline smoke tests
 ```bash
 pip install -r requirements.txt
 
-# Run the tests (fast, CPU)
-python -m tests.test_encoding
-python -m tests.test_pipeline
+# Tests (CPU, ~30s)
+python -m pytest tests/ -q --ignore=tests/test_server.py
 
-# Start the analysis server + GUI
+# Analysis server + GUI
 python -m uvicorn server.app:app --port 8000
-# open http://localhost:8000/app/          (vanilla GUI)
-# open http://localhost:8000/app-react/  (React + Chessground, run `npm run build` in web/react first)
+# http://localhost:8000/app/          vanilla GUI
+# http://localhost:8000/app-react/    after npm run build in web/react/
 ```
 
 The server auto-discovers `results/latest.pt`, then `checkpoints/latest.pt`, unless `IMMORTALITE_ZERO_CHECKPOINT` is set.
 
-To analyze with a trained net, point the server at a checkpoint:
-
 ```bash
-# Windows
-set IMMORTALITE_ZERO_CHECKPOINT=checkpoints\latest.pt
+# Windows (PowerShell)
+$env:IMMORTALITE_ZERO_CHECKPOINT="results\latest.pt"
 python -m uvicorn server.app:app --port 8000
 ```
 
 ## Training
 
-Local (slow, CPU):
+### Where to train
+
+| Platform | Path | Notes |
+|----------|------|-------|
+| **Google Colab** | `colab/train.ipynb` | Free GPU, Drive checkpoints, 2 parallel workers |
+| **Lightning AI** | `lightning-ai/run_train.py` | ~4h sessions, 4 workers, background-friendly |
+| **Local CPU** | `engine.train` | `--light` preset for smoke tests |
+
+See `colab/README.md` and `lightning-ai/README.md` for full workflows.
+
+### Current GPU recipe (Colab / Lightning)
+
+These override the `--gpu` preset when passed on the CLI. Resume always keeps the **checkpoint architecture** (currently 8×96, 51 value bins).
+
+| Setting | Colab | Lightning |
+|---------|-------|-----------|
+| Games / iter | 256 | 256 |
+| Train steps / iter | 1600 | 1600 |
+| MCTS sims / move | 100 | 100 |
+| Concurrency | 128 | 128 |
+| Self-play workers | 2 | 4 |
+| Replay buffer / window | 200k | 200k |
+| Draw penalty | 1/3 | 1/3 |
+| Resign | off | off |
+| LR | 2.5e-4 constant | 2.5e-4 constant |
+| Gate every | 20 iters | 20 iters |
+| Gate games (SPRT cap) | 512 | 512 |
+| Gate sims | 100 | 100 |
+| Save snapshot | every 10 iters | every 10 iters |
+
+**LR schedule:** cosine warmup/decay is built into `engine/train.py`, but both runners set `lr == lr_min` so the effective rate stays flat. When gates plateau, manually drop both (e.g. to `6e-5`) and resume from `latest.pt`.
+
+**Gates:** auto-gate compares current net vs checkpoint from **20 iterations ago**. SPRT verdict is logged to `metrics_gates.csv` (`llr`, `sprt_decision`, `games_played`). Rotate or delete an old `metrics_gates.csv` if the header schema changed.
+
+### Local smoke test
 
 ```bash
-python -m engine.train --iterations 20 --device cpu
+python -m engine.train --device cpu --light --games 8 --iterations 1 \
+  --selfplay-workers 2 --train-steps 4 --gate-every 0 \
+  --checkpoint-dir tmp/smoke --save-every 0
 ```
 
-Colab free GPU (recommended): open `colab/train.ipynb`, set the runtime to GPU, and run the cells. Checkpoints save to Google Drive every iteration so disconnects don't lose progress.
+### Encoding compatibility
 
-Note: the current canonical encoding uses 20 input planes (side-to-move mirrored + repetition + halfmove clock). Older 18-plane sample shards/checkpoints are intentionally ignored by the trainer; start this encoding with a fresh `--checkpoint-dir`.
-
-You can inspect a folder before training/resume:
+Canonical encoding uses **20 input planes** (side-to-move mirror + repetition + halfmove clock). Older 18-plane shards are ignored.
 
 ```bash
-python -m engine.inspect_encoding --checkpoint-dir checkpoints
-python -m engine.inspect_encoding --checkpoint-dir checkpoints --only-incompatible --json
+python -m engine.inspect_encoding --checkpoint-dir results
+python -m engine.inspect_encoding results/latest.pt
 ```
 
-## Use as a UCI engine
+## UCI engine
 
 ```bash
-python -m uci.uci_engine checkpoints/latest.pt
+python -m uci.uci_engine results/latest.pt
 ```
 
-Options: `Simulations` (search budget/move), `MultiPV`.
+Options: `Simulations`, `MultiPV`.
 
-## Design notes & honest expectations
+## Design notes
 
-- **Strength**: a *light* model trained via *pure self-play* on free hardware lands around club-amateur level — this is a fun, characterful analysis tool, not a Stockfish/Leela rival. Strength comes from model + data scale, which we deliberately trade away for speed and style.
-- **Tunable spice**: `engine/config.py -> BeautyConfig.soundness_window` is the main "how risky" dial. Wider window = more spectacular but slightly less sound; narrower = safer.
-- **Research baked in**: Gumbel "completed-Q" improved policy (sample-efficient at low simulation counts) and mild draw-contempt shaping help self-play improve within a free Colab budget. The GPU preset uses flat 100 MCTS sims/move with strength gates every 20 iterations.
+- **Strength:** a light net trained via pure self-play on free GPUs lands around club-amateur level — a characterful analysis tool, not a Stockfish rival.
+- **Throughput:** parallel workers duplicate the net in subprocesses; each worker batches all its games at `concurrency = games_per_worker`.
+- **Research baked in:** Gumbel completed-Q policy targets, search draw-contempt, SPRT gating, Syzygy adjudication.
+
+## Training history
+
+See **[TRAINING_CHANGELOG.md](TRAINING_CHANGELOG.md)** for a summary of recipe changes across git history and when to resume vs restart.
 
 ## Relevant research
 
-- Gumbel AlphaZero / MuZero — Danihelka et al., ICLR 2022 (sample-efficient low-sim search)
-- Search-contempt — arXiv:2504.07757, 2025 (compute-efficient self-play on consumer GPUs)
-- MiniZero — arXiv:2310.11305 (progressive simulation)
-- Maia / Maia-2 — KDD 2020 / NeurIPS 2024 (human-like, characterful play)
-- Grandmaster-Level Chess Without Search / ChessBench — DeepMind, NeurIPS 2024 (dataset for optional pretraining)
+- Gumbel AlphaZero / MuZero — Danihelka et al., ICLR 2022
+- Search-contempt — arXiv:2504.07757, 2025
+- MiniZero — arXiv:2310.11305
+- Maia / Maia-2 — KDD 2020 / NeurIPS 2024
+- Grandmaster-Level Chess Without Search — DeepMind, NeurIPS 2024
 
 ## Roadmap
 
-- Optional supervised pretraining on attacking-master games (Tal, Kasparov, Morphy) for more strength + sharper style.
-- Full Gumbel sequential-halving budget allocation in search.
-- Upgrade GUI to React + Chessground if a richer UI is wanted. (Scaffold at `web/react/` — build with `npm run build`, served at `/app-react/`.)
+- Optional supervised pretraining on attacking-master games
+- Full Gumbel sequential-halving budget allocation
+- SPRT enforcement (auto-reject on FAIL)
+- Central inference server for parallel self-play (single GPU copy)

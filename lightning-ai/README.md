@@ -1,45 +1,30 @@
 # Training Immortalite Zero on Lightning AI
 
-Self-play training on a Lightning AI Studio GPU. Same workflow as Colab, but
-checkpoints and Syzygy tablebases live in sibling folders you upload manually.
+Self-play on a Lightning AI Studio GPU. Same recipe as Colab, but checkpoints and Syzygy live in **sibling folders** you upload manually between sessions.
 
-> **What you're doing:** Clone the repo in your studio, upload `results/` and
-> `syzygy345/` next to it, run the notebook, then download the updated
-> `results/` folder when the session ends.
+> **Prefer `run_train.py`** over the notebook — training survives browser close (~4h studio limit still applies).
 
 ---
 
 ## Workspace layout
 
-Upload (or create) this structure in your Lightning AI studio:
-
 ```
 parent/
-├── immortalite-zero/     # git clone
+├── immortalite-zero/       # git clone
 │   └── lightning-ai/
-│       ├── train.ipynb   # notebook workflow
-│       ├── run_train.py  # background-friendly training script
-│       └── run_gate.py   # manual checkpoint gate script
-├── results/              # manual upload — checkpoints + metrics
+│       ├── train.ipynb
+│       ├── run_train.py    # recommended
+│       ├── run_gate.py
+│       └── paths.py
+├── results/                # upload before each session
 │   ├── latest.pt
 │   ├── metrics.csv
-│   └── metrics_gates.csv
-└── syzygy345/            # manual upload — 145 .rtbw files (~378 MB)
+│   ├── metrics_gates.csv
+│   └── ckpt_iter_XXXX.pt
+└── syzygy345/              # 145 .rtbw files (~378 MB)
 ```
 
-Training writes to `results/` every iteration (`latest.pt`, `metrics.csv`,
-`metrics_gates.csv`, numbered snapshots). Re-upload `results/` before each
-session to resume from `latest.pt`.
-
----
-
-## Before you start
-
-- A **Lightning AI** account with GPU studio access.
-- `results/` and `syzygy345/` uploaded as siblings of the cloned repo.
-- Push engine changes to GitHub so `git pull` in the notebook picks them up.
-
-To build `syzygy345/` locally once:
+Build Syzygy locally once:
 
 ```bash
 python scripts/download_syzygy345.py --out syzygy345
@@ -47,113 +32,101 @@ python scripts/download_syzygy345.py --out syzygy345
 
 ---
 
-## Step 1 — Set up the studio
+## Before you start
 
-1. Create a GPU studio on [Lightning AI](https://lightning.ai/).
-2. Clone the repo into the workspace.
-3. Upload `results/` and `syzygy345/` to the **parent** of the repo (same level
-   as `immortalite-zero/`, not inside it).
-4. Open `immortalite-zero/lightning-ai/train.ipynb`.
+- Lightning AI account with GPU studio.
+- `results/` and `syzygy345/` as **siblings** of the repo (not inside it).
+- Push engine changes to GitHub; `git pull` in cell 1 or before `run_train.py`.
 
-## Step 2 — Train (notebook or script)
+---
 
-Lightning AI disconnects after ~4 hours. **Prefer the script** so training keeps
-running after you close the browser tab.
+## Step 1 — Studio setup
 
-### Option A — Background script (recommended)
+1. Create a GPU studio.
+2. Clone the repo.
+3. Upload `results/` and `syzygy345/` next to the repo.
+4. `pip install -q python-chess numpy tqdm`
+
+## Step 2 — Train (script recommended)
+
+Edit `TRAIN` in `lightning-ai/run_train.py` if needed, then:
 
 ```bash
 cd immortalite-zero
-pip install -q python-chess numpy tqdm
-
-# Edit TRAIN settings in lightning-ai/run_train.py if needed, then:
 nohup python lightning-ai/run_train.py > ../results/train.log 2>&1 &
-
-# Watch progress
 tail -f ../results/train.log
 ```
 
-Training writes to `../results/` (`latest.pt`, `metrics.csv`, …) every iteration.
-Re-upload `results/` before each new studio session to resume.
+Writes `latest.pt`, `metrics.csv`, shards every iteration to `../results/`.
 
-### Option B — Notebook
+### Current `TRAIN` defaults
 
-Open `lightning-ai/train.ipynb` and run cells top to bottom. **Keep the browser
-tab open** — the kernel stops if you close it.
+Same as Colab except **`selfplay_workers: 4`** (Lightning hosts tend to have more CPU cores). See `colab/README.md` for the full parameter table.
 
-### Manual gate (script)
+| Key | Lightning value |
+|-----|-----------------|
+| `games` | 256 |
+| `train_steps` | 1600 |
+| `selfplay_workers` | 4 |
+| `gate_games` | 512 (SPRT cap) |
+| `lr` / `lr_min` | 2.5e-4 (constant) |
 
-Edit `CHECKPOINT_A` and `CHECKPOINT_B` at the top of `lightning-ai/run_gate.py`
-(use an int iteration or `"latest"`), then:
+## Step 3 — Notebook alternative
+
+Open `lightning-ai/train.ipynb` — **keep the browser tab open** (kernel stops if closed).
+
+| Cell | What it does |
+|------|--------------|
+| 1 | Resolve `../results`, `../syzygy345`, `git pull` |
+| 2 | Install `python-chess` |
+| 3 | GPU check + `--gpu` preset |
+| 4 | Verify Syzygy (145 `.rtbw`) |
+| 5 | Train (`TRAIN` dict, same as script) |
+| 6 | Optional manual SPRT gate |
+| 7 | Plot metrics |
+
+## Step 4 — Manual gate
+
+Edit `CHECKPOINT_A` / `CHECKPOINT_B` in `lightning-ai/run_gate.py` (int or `"latest"`):
 
 ```bash
 cd immortalite-zero
 python lightning-ai/run_gate.py
 ```
 
-Results append to `../results/metrics_gates.csv`.
-
-## Step 3 — Notebook cells (if using train.ipynb)
-
-| Cell | What it does |
-|------|--------------|
-| 1 | Resolves `../results` and `../syzygy345`, `git pull`s latest code. |
-| 2 | Installs `python-chess` (PyTorch should already be on the studio). |
-| 3 | Confirms GPU + sets `--gpu` preset. |
-| 4 | Verifies Syzygy upload (145 `.rtbw` files). |
-| 5 | **Config + train** — flat 100 sims, gates every 20 iters. `resume: True` by default. |
-| 6 | Optional manual gate between any two checkpoints. |
-| 7 | Plots metrics + gate winrates from `results/metrics.csv`. |
-
-## Step 4 — Know what "good" looks like
-
-Each training line looks like:
-
-```
-iter  12 | sims 100 | games 128 | samples 5200 | buffer 40000 | policy_loss 1.85 | value_loss 0.21 | 180.0s
-```
-
-- **policy_loss** should trend **down** over time.
-- **value_loss** should be meaningful (not ~0).
-- The **metrics plot** (cell 7) is the clearest signal.
+Appends to `../results/metrics_gates.csv` with SPRT columns. Prints PASS / FAIL / INCONCLUSIVE.
 
 ## Step 5 — Sessions and resuming
 
-When a studio session ends, download the updated `results/` folder.
+When a studio ends, **download the updated `results/` folder**.
 
-| Goal | What to do |
-|------|------------|
-| **Resume** next session | Re-upload `results/` (with `latest.pt`), re-run cells 1→5. |
-| **Fresh run** | Upload an empty `results/` (no `latest.pt`), re-run cells 1→5. |
+| Goal | Action |
+|------|--------|
+| Resume | Re-upload `results/` with `latest.pt`, re-run train |
+| Fresh start | Empty `results/` (no `latest.pt`) |
 
-Numbered snapshots `ckpt_iter_0000.pt`, `ckpt_iter_0010.pt`, … are kept every
-10 iterations (`save_every` in cell 5).
+Rotate old `metrics_gates.csv` if upgrading from pre-SPRT recipes.
 
-## Step 6 — Use the trained engine locally
-
-1. Download `latest.pt` from your uploaded `results/` folder.
-2. Verify encoding compatibility:
+## Step 6 — Use locally
 
 ```bash
 python -m engine.inspect_encoding results/latest.pt
-```
-
-3. Start the analysis server:
-
-```bash
-# Windows (PowerShell)
 $env:IMMORTALITE_ZERO_CHECKPOINT="results\latest.pt"
 python -m uvicorn server.app:app --port 8000
 ```
 
-4. Open **http://localhost:8000/app/** .
+Open **http://localhost:8000/app/**
 
 ---
 
 ## Troubleshooting
 
-- **"CUDA available: False"** → select a GPU machine in Lightning AI and re-run cell 3.
-- **Syzygy incomplete** → upload all 145 `.rtbw` files to `syzygy345/` next to the repo.
-- **results/ not found** → folder must be a sibling of `immortalite-zero/`, not inside it.
-- **Training seems stuck** → one line per iteration; can take 1–3 min each on the GPU preset.
-- **Out of memory** → lower `filters`/`blocks` or `batch_size` in `engine/config.py`, push, pull, re-run.
+| Problem | Fix |
+|---------|-----|
+| No CUDA | Select GPU machine, re-run |
+| Syzygy incomplete | All 145 `.rtbw` in `syzygy345/` sibling folder |
+| `results/` not found | Sibling of repo, not inside it |
+| Slow self-play | Raise `selfplay_workers` (watch CPU); ensure `concurrency` 128 |
+| OOM | Lower `games` and `concurrency` together |
+
+Recipe history: **[TRAINING_CHANGELOG.md](../TRAINING_CHANGELOG.md)**
