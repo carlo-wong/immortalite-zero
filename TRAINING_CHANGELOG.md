@@ -13,7 +13,7 @@ Gates run every 20 iters vs the checkpoint **20 iters ago**. Edit only the `TRAI
 | **61**† | **128** | **800** | 128 | 1 | 200k | 64 | (cosine) | scale games + steps with concurrency |
 | **80** | 128 | 800 | 128 | 1 | 200k | 64 | **~6e-4 flat** | resume from `ckpt_iter_0080` |
 | **100** | 128 | 800 | 128 | 1 | 200k | 64 | **2.5e-4 flat** | consolidate after hot LR |
-| **120** | **256** | **800** | **256** | **1** | 200k | **512 SPRT** | 2.5e-4 flat | single GPU batch; concurrency=games |
+| **120** | **256** | **1600** | **256** | **1** | 200k | **512 SPRT** | 2.5e-4 flat | single GPU batch; concurrency=games |
 
 **Current row:** start **120** — 256 games, concurrency 256, 1 worker, SPRT cap 512, LR 2.5e-4 constant. Multi-worker self-play reverted (slower on one GPU).
 
@@ -67,7 +67,7 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 
 ### Iter 120 — scale-up + SPRT gates (current)
 
-- **256 games / 800 train steps** — double games vs 128/800 block; ~3× sample reuse at batch 128.
+- **256 games / 1600 train steps** — double games and steps vs 128/800; ~6× sample reuse at batch 128.
 - **`selfplay_workers: 1`** — one GPU owner with `torch.compile` + FP16; multi-worker subprocess self-play reverted (contended CUDA on single GPU).
 - **`concurrency: 256`** — matches games so every active position batches in one `evaluate_batch` call.
 - **SPRT gates** replace winrate thresholds: cap **512 games**, early-stop when H₀ (0 Elo) or H₁ (+25 Elo) is decided; logs PASS / FAIL / INCONCLUSIVE. Not enforced yet (no auto-reject).

@@ -66,7 +66,7 @@ Same as Colab: **single GPU worker**, **`concurrency` = `games`** for full batch
 | Key | Lightning value |
 |-----|-----------------|
 | `games` | 256 |
-| `train_steps` | 800 |
+| `train_steps` | 1600 |
 | `concurrency` | 256 |
 | `selfplay_workers` | 1 |
 | `gate_games` | 512 (SPRT cap) |

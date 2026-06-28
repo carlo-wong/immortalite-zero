@@ -84,7 +84,7 @@ These override the `--gpu` preset when passed on the CLI. Resume always keeps th
 | Setting | Colab | Lightning |
 |---------|-------|-----------|
 | Games / iter | 256 | 256 |
-| Train steps / iter | 800 | 800 |
+| Train steps / iter | 1600 | 1600 |
 | MCTS sims / move | 100 | 100 |
 | Concurrency | 256 | 256 |
 | Self-play workers | 1 | 1 |

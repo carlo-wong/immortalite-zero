@@ -29,7 +29,7 @@ TRAIN = {
     "sims": 100,
     "gate_sims": 100,
     "games": 256,
-    "train_steps": 800,
+    "train_steps": 1600,
     "concurrency": 256,
     "selfplay_workers": 1,
     "replay_buffer": 200_000,
