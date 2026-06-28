@@ -13,9 +13,10 @@ Gates run every 20 iters vs the checkpoint **20 iters ago**. Edit only the `TRAI
 | **61**† | **128** | **800** | 128 | 1 | 200k | 64 | (cosine) | scale games + steps with concurrency |
 | **80** | 128 | 800 | 128 | 1 | 200k | 64 | **~6e-4 flat** | resume from `ckpt_iter_0080` |
 | **100** | 128 | 800 | 128 | 1 | 200k | 64 | **2.5e-4 flat** | consolidate after hot LR |
-| **120** | **256** | **1600** | **256** | **1** | 200k | **512 SPRT** | 2.5e-4 flat | single GPU batch; concurrency=games |
+| **120** | 256 | 1600 | 256 | 1 | 200k | 512 SPRT | 2.5e-4 flat | scale-up trial; reverted at 122 |
+| **122** | **128** | **800** | **128** | **1** | 200k | **128 SPRT** | 2.5e-4 flat | faster s/game; gate cap matches batch |
 
-**Current row:** start **120** — 256 games, 1600 train steps, concurrency 256, 1 worker, SPRT cap 512, LR 2.5e-4 constant. Multi-worker self-play reverted (slower on one GPU).
+**Current row:** start **122** — 128 games, 800 train steps, concurrency 128, 1 worker, SPRT cap 128, LR 2.5e-4 constant.
 
 Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net only with a new `--checkpoint-dir`.
 
@@ -65,14 +66,15 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 - Same games, steps, replay, and 64-game winrate gates.
 - Policy was still improving but loss/noise suggested the hotter 6e-4 block had run its course.
 
-### Iter 120 — scale-up + SPRT gates (current)
+### Iter 120 — 256-game scale-up (reverted at 122)
 
-- **256 games / 1600 train steps** — double games and steps vs 128/800; ~6× sample reuse at batch 128.
-- **`selfplay_workers: 1`** — one GPU owner with `torch.compile` + FP16; multi-worker subprocess self-play reverted (contended CUDA on single GPU).
-- **`concurrency: 256`** — matches games so every active position batches in one `evaluate_batch` call.
-- **SPRT gates** replace winrate thresholds: cap **512 games**, early-stop when H₀ (0 Elo) or H₁ (+25 Elo) is decided; logs PASS / FAIL / INCONCLUSIVE. Not enforced yet (no auto-reject).
-- `metrics_gates.csv` adds `llr`, `sprt_decision`, `games_played`, `elo0`, `elo1` — delete old CSV before first run on this recipe.
-- Replay 200k holds ~**6 iters** of history at 256 games.
-- LR unchanged at 2.5e-4; draw 1/3; resign off; gate sims 100; exploration moves 20.
+- **256 games / 1600 train steps** — trial; ~17% slower per game vs 128 on T4 (see iter 121 metrics).
+- **`selfplay_workers: 1`**, **`concurrency: 256`**, SPRT cap 512.
+
+### Iter 122 — back to 128 + smaller SPRT cap (current)
+
+- **128 games / 800 train steps**, **concurrency 128**, **`selfplay_workers: 1`** — best measured s/game on single GPU.
+- **SPRT gate cap 128** (was 512); still early-stops when H₀/H₁ decided.
+- LR 2.5e-4 flat; replay 200k (~12 iters at 128 games); draw 1/3; resign off; gate sims 100.
 
 Last updated: 2026-06-28.

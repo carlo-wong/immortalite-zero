@@ -8,7 +8,7 @@ It learns purely from self-play (no human games, no Stockfish). Optional human-g
 
 - **Self-play training** with football-style draw shaping (`draw_penalty = 1/3`: a draw scores like one-third of a win).
 - **Parallel self-play** across worker processes (`--selfplay-workers`) for higher throughput on multi-core GPU hosts.
-- **SPRT strength gates** — sequential probability ratio tests with early stop (cap 512 games, H₀=0 Elo vs H₁=+25 Elo). Logs PASS / FAIL / INCONCLUSIVE; does not auto-reject checkpoints yet.
+- **SPRT strength gates** — sequential probability ratio tests with early stop (cap 128 games, H₀=0 Elo vs H₁=+25 Elo). Logs PASS / FAIL / INCONCLUSIVE; does not auto-reject checkpoints yet.
 - **Beauty-bias move selection** (optional): among sound moves, prefer sacrificial / attacking / tactical / surprising lines.
 - **Analysis GUI**: board, eval bar, best-move arrow, top-5 MultiPV lines, PGN/FEN import, move navigation.
 - **UCI-compatible** for Arena, Cutechess, or Lichess local-engine mode.
@@ -83,17 +83,17 @@ These override the `--gpu` preset when passed on the CLI. Resume always keeps th
 
 | Setting | Colab | Lightning |
 |---------|-------|-----------|
-| Games / iter | 256 | 256 |
-| Train steps / iter | 1600 | 1600 |
+| Games / iter | 128 | 128 |
+| Train steps / iter | 800 | 800 |
 | MCTS sims / move | 100 | 100 |
-| Concurrency | 256 | 256 |
+| Concurrency | 128 | 128 |
 | Self-play workers | 1 | 1 |
 | Replay buffer / window | 200k | 200k |
 | Draw penalty | 1/3 | 1/3 |
 | Resign | off | off |
 | LR | 2.5e-4 constant | 2.5e-4 constant |
 | Gate every | 20 iters | 20 iters |
-| Gate games (SPRT cap) | 512 | 512 |
+| Gate games (SPRT cap) | 128 | 128 |
 | Gate sims | 100 | 100 |
 | Save snapshot | every 10 iters | every 10 iters |
 
