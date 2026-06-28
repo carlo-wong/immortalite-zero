@@ -28,8 +28,8 @@ from paths import ensure_ckpt_dir, resolve_paths, validate_syzygy
 TRAIN = {
     "sims": 100,
     "gate_sims": 100,
-    "games": 256,
-    "train_steps": 1600,
+    "games": 128,
+    "train_steps": 800,
     "concurrency": 128,
     "selfplay_workers": 4,
     "replay_buffer": 200_000,
