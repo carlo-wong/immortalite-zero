@@ -15,7 +15,7 @@ Gates run every 20 iters vs the checkpoint **20 iters ago**. Edit only the `TRAI
 | **100** | 128 | 800 | 128 | 1 | 200k | 64 | **2.5e-4 flat** | consolidate after hot LR |
 | **120** | **256** | **1600** | **256** | **1** | 200k | **512 SPRT** | 2.5e-4 flat | single GPU batch; concurrency=games |
 
-**Current row:** start **120** — 256 games, concurrency 256, 1 worker, SPRT cap 512, LR 2.5e-4 constant. Multi-worker self-play reverted (slower on one GPU).
+**Current row:** start **120** — 256 games, 1600 train steps, concurrency 256, 1 worker, SPRT cap 512, LR 2.5e-4 constant. Multi-worker self-play reverted (slower on one GPU).
 
 Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net only with a new `--checkpoint-dir`.
 
