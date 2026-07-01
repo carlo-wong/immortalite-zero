@@ -63,7 +63,7 @@ When gates plateau (~15–20 iters flat), drop `lr` and `lr_min` together (e.g. 
 
 ```
 iter  40 | sims 100 | games 128 | samples 18500 | buffer 200000 | policy_loss 2.1 | value_loss 0.4 | lr 2.500e-04 | 420.0s
-gate iter 40: current vs ckpt_iter_0020.pt -> 0.580 (Wins: 28, ...) SPRT PASS (llr=3.42)
+gate iter 40: current vs ckpt_iter_0020.pt -> 0.580 (Wins: 28, ...) SPRT PASS (llr=3.42) Elo +56.0 [95% +12.3, +101.5] LOS 98.1%
 ```
 
 - **policy_loss** should trend down over many iterations (not every single iter).
@@ -85,7 +85,7 @@ Checkpoints save to Drive **every iteration** (`latest.pt`, `metrics.csv`, sampl
 
 Numbered snapshots: `ckpt_iter_0000.pt`, `ckpt_iter_0010.pt`, … every `save_every` iters.
 
-**metrics_gates.csv:** if you upgraded from an older recipe, delete or rotate the file — the header now includes `llr`, `sprt_decision`, `games_played`, `elo0`, `elo1`.
+**metrics_gates.csv:** if you upgraded from an older recipe, delete or rotate the file — the header now includes the Fishtest-style SPRT (`llr`, `decision`, `verdict`) plus a logistic `elo` estimate with a 95% CI (`elo_lower`/`elo_upper`) and `los`.
 
 ## Step 7 — Update code from your machine
 

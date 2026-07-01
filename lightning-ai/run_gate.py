@@ -127,6 +127,11 @@ def main() -> None:
     print(f"  Mean game length: {metrics['mean_game_len']:.1f} plies")
     print(f"  Terminations: {metrics['terminations']}")
     print(f"  SPRT: {sprt_label} (llr={metrics['llr']:.2f}, decision={metrics['sprt_decision']})")
+    print(
+        f"  Elo: {metrics['elo']:+.1f} "
+        f"[95% CI {metrics['elo_lower']:+.1f}, {metrics['elo_upper']:+.1f}] "
+        f"LOS {metrics['los'] * 100:.1f}%"
+    )
     print(f"  Logged to: {os.path.join(paths.ckpt_dir, 'metrics_gates.csv')}")
     print(f"Result: {label_a} {sprt_label} vs {label_b}")
     print("=" * 40)

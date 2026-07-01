@@ -102,10 +102,11 @@ def test_log_gate_metrics_writes_correct_csv() -> None:
         df = pd.read_csv(csv_path)
         assert len(df) == 1
         expected_cols = [
-            "iter", "prev_iter", "winrate", "wins_as_white", "wins_as_black",
-            "losses_as_white", "losses_as_black", "draws_as_white", "draws_as_black",
-            "mean_game_len", "games", "terminations",
-            "llr", "sprt_decision", "games_played", "elo0", "elo1",
+            "iter", "prev_iter", "games", "games_played",
+            "wins_as_white", "wins_as_black", "losses_as_white", "losses_as_black",
+            "draws_as_white", "draws_as_black",
+            "winrate", "wins", "draws", "losses", "mean_game_len", "terminations",
+            "elo", "elo_lower", "elo_upper", "los", "llr", "decision", "verdict",
         ]
         assert list(df.columns) == expected_cols
 

@@ -27,7 +27,17 @@ from tqdm.auto import tqdm
 from .config import Config, NetConfig
 from .encoding import ENCODING_VERSION
 from .network import ChessNet, NetEvaluator
-from .sprt import ALPHA, BETA, ELO0, ELO1, sprt_bounds, sprt_decision, sprt_llr, sprt_verdict_label
+from .sprt import (
+    ALPHA,
+    BETA,
+    ELO0,
+    ELO1,
+    sprt_bounds,
+    sprt_decision,
+    sprt_elo,
+    sprt_llr,
+    sprt_verdict_label,
+)
 from .selfplay import GameResult, Sample, play_game_gen, play_games_batched, play_games_parallel
 
 _SAMPLE_SHARD_PREFIX = "samples_iter_"
@@ -174,6 +184,8 @@ def save_checkpoint(net: torch.nn.Module, cfg: Config, path: str, iteration: int
 
 
 def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
+                 selfplay_seconds: float = float("nan"),
+                 train_seconds: float = float("nan"),
                  policy_loss: float, value_loss: float,
                  policy_entropy: float, value_sign_acc: float,
                  policy_top1_agree: float, grad_norm: float,
@@ -191,14 +203,15 @@ def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
     with open(path, "a", encoding="utf-8") as f:
         if new:
             f.write(
-                "iter,sims,samples,seconds,policy_loss,value_loss,"
+                "iter,sims,samples,seconds,selfplay_seconds,train_seconds,policy_loss,value_loss,"
                 "policy_entropy,value_sign_acc,policy_top1_agree,grad_norm,"
                 "mean_game_len,decisive_rate,white_win_rate,draw_rate,"
                 "max_moves_trunc_rate,value_mean,value_std,winrate_vs_prev,"
                 "learning_rate,games,train_steps,batch_size,buffer_size,terminations\n"
             )
         f.write(
-            f"{it},{sims},{samples},{dt:.1f},{policy_loss:.6f},{value_loss:.6f},"
+            f"{it},{sims},{samples},{dt:.1f},{selfplay_seconds:.1f},{train_seconds:.1f},"
+            f"{policy_loss:.6f},{value_loss:.6f},"
             f"{policy_entropy:.6f},{value_sign_acc:.6f},{policy_top1_agree:.6f},{grad_norm:.6f},"
             f"{mean_game_len:.6f},{decisive_rate:.6f},{white_win_rate:.6f},{draw_rate:.6f},"
             f"{max_moves_trunc_rate:.6f},{value_mean:.6f},{value_std:.6f},{winrate_vs_prev:.6f},"
@@ -270,29 +283,45 @@ def _flush_step_metrics(ckpt_dir: str, it: int, rows: list[tuple[int, dict[str, 
             )
 
 
+GATE_CSV_HEADER = (
+    "iter,prev_iter,games,games_played,"
+    "wins_as_white,wins_as_black,losses_as_white,losses_as_black,"
+    "draws_as_white,draws_as_black,"
+    "winrate,wins,draws,losses,mean_game_len,terminations,"
+    "elo,elo_lower,elo_upper,los,llr,decision,verdict\n"
+)
+
+
 def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games: int) -> None:
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = os.path.join(ckpt_dir, "metrics_gates.csv")
     new = not os.path.exists(path)
-    games_played = int(metrics.get("games_played", games))
-    llr = metrics.get("llr", float("nan"))
-    sprt_decision_val = metrics.get("sprt_decision", "")
-    elo0 = metrics.get("elo0", float("nan"))
-    elo1 = metrics.get("elo1", float("nan"))
+
+    wins = metrics["wins_as_white"] + metrics["wins_as_black"]
+    losses = metrics["losses_as_white"] + metrics["losses_as_black"]
+    draws = metrics["draws_as_white"] + metrics["draws_as_black"]
+    games_played = int(metrics.get("games_played", wins + draws + losses))
+    elo0 = float(metrics.get("elo0", ELO0))
+    elo1 = float(metrics.get("elo1", ELO1))
+
+    llr = float(metrics.get("llr", sprt_llr(wins, draws, losses, elo0, elo1)))
+    llr_lower, llr_upper = sprt_bounds()
+    decision = metrics.get("sprt_decision") or sprt_decision(llr, llr_lower, llr_upper)
+    verdict = sprt_verdict_label(decision)
+    elo, elo_lower, elo_upper, los = sprt_elo(wins, draws, losses)
+
     with open(path, "a", encoding="utf-8") as f:
         if new:
-            f.write(
-                "iter,prev_iter,winrate,wins_as_white,wins_as_black,"
-                "losses_as_white,losses_as_black,draws_as_white,draws_as_black,"
-                "mean_game_len,games,terminations,llr,sprt_decision,games_played,elo0,elo1\n"
-            )
+            f.write(GATE_CSV_HEADER)
         f.write(
-            f"{it},{prev_it},{metrics['winrate']:.6f},"
+            f"{it},{prev_it},{games},{games_played},"
             f"{metrics['wins_as_white']},{metrics['wins_as_black']},"
             f"{metrics['losses_as_white']},{metrics['losses_as_black']},"
             f"{metrics['draws_as_white']},{metrics['draws_as_black']},"
-            f"{metrics['mean_game_len']:.2f},{games},{metrics['terminations']},"
-            f"{llr:.6f},{sprt_decision_val},{games_played},{elo0:.6f},{elo1:.6f}\n"
+            f"{metrics['winrate']:.6f},{wins},{draws},{losses},"
+            f"{metrics['mean_game_len']:.2f},{metrics['terminations']},"
+            f"{elo:.2f},{elo_lower:.2f},{elo_upper:.2f},{los:.6f},"
+            f"{llr:.6f},{decision},{verdict}\n"
         )
 
 
@@ -471,6 +500,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     terminations_str = ";".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
     games_played = completed if completed > 0 else 0
     winrate = score / games_played if games_played > 0 else float("nan")
+    elo, elo_lower, elo_upper, los = sprt_elo(total_wins, total_draws, total_losses)
 
     return {
         "winrate": winrate,
@@ -486,6 +516,10 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
         "sprt_decision": current_sprt_decision if sprt else "continue",
         "sprt_lower": sprt_lower,
         "sprt_upper": sprt_upper,
+        "elo": elo,
+        "elo_lower": elo_lower,
+        "elo_upper": elo_upper,
+        "los": los,
         "games_played": games_played,
         "elo0": sprt_elo0 if sprt else float("nan"),
         "elo1": sprt_elo1 if sprt else float("nan"),
@@ -944,6 +978,8 @@ def main() -> None:
                 sims,
                 new_samples,
                 dt,
+                selfplay_seconds=selfplay_dt,
+                train_seconds=train_dt,
                 policy_loss=pl,
                 value_loss=vl,
                 policy_entropy=policy_entropy,
@@ -1018,7 +1054,10 @@ def main() -> None:
                                     f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
                                     f"-> {gate_metrics['winrate']:.3f} (Wins: {total_wins}, Losses: {total_losses}, "
                                     f"Draws: {total_draws}, games: {games_played}) "
-                                    f"SPRT {sprt_label} (llr={gate_metrics['llr']:.2f})"
+                                    f"SPRT {sprt_label} (llr={gate_metrics['llr']:.2f}) "
+                                    f"Elo {gate_metrics['elo']:+.1f} "
+                                    f"[95% {gate_metrics['elo_lower']:+.1f}, {gate_metrics['elo_upper']:+.1f}] "
+                                    f"LOS {gate_metrics['los'] * 100:.1f}%"
                                 )
                                 _log_gate_metrics(
                                     cfg.train.checkpoint_dir,

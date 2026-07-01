@@ -99,7 +99,7 @@ These override the `--gpu` preset when passed on the CLI. Resume always keeps th
 
 **LR schedule:** cosine warmup/decay is built into `engine/train.py`, but both runners set `lr == lr_min` so the effective rate stays flat. When gates plateau, manually drop both (e.g. to `6e-5`) and resume from `latest.pt`.
 
-**Gates:** auto-gate compares current net vs checkpoint from **20 iterations ago**. SPRT verdict is logged to `metrics_gates.csv` (`llr`, `sprt_decision`, `games_played`). Rotate or delete an old `metrics_gates.csv` if the header schema changed.
+**Gates:** auto-gate compares current net vs checkpoint from **20 iterations ago** with a Fishtest-style SPRT. Logged to `metrics_gates.csv`: the SPRT (`llr`, `decision`, `verdict`) plus a logistic `elo` estimate with a 95% confidence interval (`elo_lower`/`elo_upper`) and `los`, so a pass reports *how much* Elo was gained. Rotate or delete an old `metrics_gates.csv` if the header schema changed.
 
 ### Local smoke test
 
