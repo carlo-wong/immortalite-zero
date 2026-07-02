@@ -61,16 +61,18 @@ Writes `latest.pt`, `metrics.csv`, shards every iteration to `../results/`.
 
 ### Current `TRAIN` defaults
 
-Same as Colab: **single GPU worker**, **`concurrency` = `games`** for full batch width. See `colab/README.md` for the full parameter table.
+Same as Colab cell 6 and `run_train.py`: Phase **2A** from iter **161**. See `colab/README.md` and `TRAINING_CHANGELOG.md`.
 
-| Key | Lightning value |
-|-----|-----------------|
+| Key | Value |
+|-----|-------|
 | `games` | 128 |
 | `train_steps` | 800 |
 | `concurrency` | 128 |
 | `selfplay_workers` | 1 |
-| `gate_games` | 128 (SPRT cap) |
-| `lr` / `lr_min` | 2.5e-4 (constant) |
+| `replay_buffer` / `replay_window` | 120k |
+| `gate_games` / `gate_sims` | 128 / 100 |
+| `lr` / `lr_min` | 5e-4 → 2e-4 (iters 161–196) |
+| `RESET_OPTIMIZER` | `False` (set `True` for first iter-161 resume only) |
 
 ## Step 3 — Notebook alternative
 

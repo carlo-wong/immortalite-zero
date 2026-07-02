@@ -40,31 +40,46 @@ def _sign(x: int) -> int:
     return (x > 0) - (x < 0)
 
 
-def board_to_planes(board: chess.Board) -> np.ndarray:
-    """Encode a board as a (20, 8, 8) float32 tensor."""
-    planes = np.zeros((NUM_INPUT_PLANES, 8, 8), dtype=np.float32)
-    # Canonical orientation: side-to-move is always "white" after mirroring.
-    canonical = board if board.turn == chess.WHITE else board.mirror()
-
-    for square, piece in canonical.piece_map().items():
-        rank = chess.square_rank(square)
-        file = chess.square_file(square)
-        plane = (piece.piece_type - 1) + (0 if piece.color == chess.WHITE else 6)
-        planes[plane, rank, file] = 1.0
-
-    if canonical.has_kingside_castling_rights(chess.WHITE):
-        planes[12, :, :] = 1.0
-    if canonical.has_queenside_castling_rights(chess.WHITE):
-        planes[13, :, :] = 1.0
-    if canonical.has_kingside_castling_rights(chess.BLACK):
-        planes[14, :, :] = 1.0
-    if canonical.has_queenside_castling_rights(chess.BLACK):
-        planes[15, :, :] = 1.0
-
-    if canonical.ep_square is not None:
-        rank = chess.square_rank(canonical.ep_square)
-        file = chess.square_file(canonical.ep_square)
-        planes[16, rank, file] = 1.0
+def _write_board_planes(board: chess.Board, planes: np.ndarray) -> None:
+    """Write canonical side-to-move planes into ``planes`` (20, 8, 8)."""
+    planes.fill(0.0)
+    if board.turn == chess.WHITE:
+        for square, piece in board.piece_map().items():
+            rank = chess.square_rank(square)
+            file = chess.square_file(square)
+            plane = (piece.piece_type - 1) + (0 if piece.color == chess.WHITE else 6)
+            planes[plane, rank, file] = 1.0
+        if board.has_kingside_castling_rights(chess.WHITE):
+            planes[12, :, :] = 1.0
+        if board.has_queenside_castling_rights(chess.WHITE):
+            planes[13, :, :] = 1.0
+        if board.has_kingside_castling_rights(chess.BLACK):
+            planes[14, :, :] = 1.0
+        if board.has_queenside_castling_rights(chess.BLACK):
+            planes[15, :, :] = 1.0
+        ep_square = board.ep_square
+        if ep_square is not None:
+            planes[16, chess.square_rank(ep_square), chess.square_file(ep_square)] = 1.0
+    else:
+        # Canonical frame without board.mirror(): square_mirror + color swap.
+        for square, piece in board.piece_map().items():
+            canon_sq = chess.square_mirror(square)
+            rank = chess.square_rank(canon_sq)
+            file = chess.square_file(canon_sq)
+            plane = (piece.piece_type - 1) + (0 if piece.color == chess.BLACK else 6)
+            planes[plane, rank, file] = 1.0
+        if board.has_kingside_castling_rights(chess.BLACK):
+            planes[12, :, :] = 1.0
+        if board.has_queenside_castling_rights(chess.BLACK):
+            planes[13, :, :] = 1.0
+        if board.has_kingside_castling_rights(chess.WHITE):
+            planes[14, :, :] = 1.0
+        if board.has_queenside_castling_rights(chess.WHITE):
+            planes[15, :, :] = 1.0
+        ep_square = board.ep_square
+        if ep_square is not None:
+            ep_m = chess.square_mirror(ep_square)
+            planes[16, chess.square_rank(ep_m), chess.square_file(ep_m)] = 1.0
 
     if board.is_repetition(2):
         planes[17, :, :] = 1.0
@@ -73,7 +88,18 @@ def board_to_planes(board: chess.Board) -> np.ndarray:
     halfmove_norm = min(float(board.halfmove_clock) / 100.0, 1.0)
     planes[19, :, :] = halfmove_norm
 
+
+def board_to_planes(board: chess.Board) -> np.ndarray:
+    """Encode a board as a (20, 8, 8) float32 tensor."""
+    planes = np.zeros((NUM_INPUT_PLANES, 8, 8), dtype=np.float32)
+    _write_board_planes(board, planes)
     return planes
+
+
+def fill_planes_batch(boards: list[chess.Board], out: np.ndarray) -> None:
+    """Fill ``out[i]`` with planes for ``boards[i]``. ``out`` shape (N, 20, 8, 8)."""
+    for i, board in enumerate(boards):
+        _write_board_planes(board, out[i])
 
 
 def move_to_index(move: chess.Move, board: chess.Board) -> int:

@@ -9,6 +9,7 @@ from engine.encoding import (
     NUM_INPUT_PLANES,
     POLICY_SIZE,
     board_to_planes,
+    fill_planes_batch,
     index_to_move,
     legal_move_indices,
     move_to_index,
@@ -77,6 +78,61 @@ def test_repetition_and_halfmove_planes() -> None:
     board_150 = chess.Board("7k/8/8/8/8/8/8/KR6 w - - 150 1")
     planes_150 = board_to_planes(board_150)
     assert np.all(planes_150[19] == 1.0)
+
+
+def _board_to_planes_via_mirror(board: chess.Board) -> np.ndarray:
+    """Reference encoder using board.mirror() (pre-optimization path)."""
+    planes = np.zeros((NUM_INPUT_PLANES, 8, 8), dtype=np.float32)
+    canonical = board if board.turn == chess.WHITE else board.mirror()
+    for square, piece in canonical.piece_map().items():
+        rank = chess.square_rank(square)
+        file = chess.square_file(square)
+        plane = (piece.piece_type - 1) + (0 if piece.color == chess.WHITE else 6)
+        planes[plane, rank, file] = 1.0
+    if canonical.has_kingside_castling_rights(chess.WHITE):
+        planes[12, :, :] = 1.0
+    if canonical.has_queenside_castling_rights(chess.WHITE):
+        planes[13, :, :] = 1.0
+    if canonical.has_kingside_castling_rights(chess.BLACK):
+        planes[14, :, :] = 1.0
+    if canonical.has_queenside_castling_rights(chess.BLACK):
+        planes[15, :, :] = 1.0
+    if canonical.ep_square is not None:
+        rank = chess.square_rank(canonical.ep_square)
+        file = chess.square_file(canonical.ep_square)
+        planes[16, rank, file] = 1.0
+    if board.is_repetition(2):
+        planes[17, :, :] = 1.0
+    if board.is_repetition(3):
+        planes[18, :, :] = 1.0
+    halfmove_norm = min(float(board.halfmove_clock) / 100.0, 1.0)
+    planes[19, :, :] = halfmove_norm
+    return planes
+
+
+def test_board_to_planes_matches_mirror_reference() -> None:
+    random.seed(1)
+    for _ in range(500):
+        board = chess.Board()
+        for _ in range(random.randint(0, 80)):
+            moves = list(board.legal_moves)
+            if not moves:
+                break
+            board.push(random.choice(moves))
+        assert np.array_equal(board_to_planes(board), _board_to_planes_via_mirror(board))
+
+
+def test_fill_planes_batch_matches_board_to_planes() -> None:
+    random.seed(2)
+    boards = [chess.Board()]
+    b = chess.Board()
+    for uci in ("e2e4", "e7e5", "g1f3"):
+        b.push_uci(uci)
+    boards.append(b)
+    out = np.zeros((len(boards), NUM_INPUT_PLANES, 8, 8), dtype=np.float32)
+    fill_planes_batch(boards, out)
+    for i, board in enumerate(boards):
+        assert np.array_equal(out[i], board_to_planes(board))
 
 
 if __name__ == "__main__":

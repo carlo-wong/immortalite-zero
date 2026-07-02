@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .config import NetConfig
-from .encoding import NUM_INPUT_PLANES, POLICY_SIZE, board_to_planes
+from .encoding import NUM_INPUT_PLANES, POLICY_SIZE, board_to_planes, fill_planes_batch
 
 
 class ResidualBlock(nn.Module):
@@ -79,6 +79,26 @@ class NetEvaluator:
         self.net = net.to(device).eval()
         self.device = device
         self._use_cuda_autocast = str(device).startswith("cuda")
+        self._batch_cap = 0
+        self._planes_buf: np.ndarray | None = None
+        self._host_input: torch.Tensor | None = None
+
+    def _ensure_batch_buffers(self, batch_size: int) -> None:
+        if batch_size <= self._batch_cap and self._planes_buf is not None:
+            return
+        new_cap = max(batch_size, self._batch_cap, 128)
+        self._batch_cap = new_cap
+        self._planes_buf = np.zeros(
+            (new_cap, NUM_INPUT_PLANES, 8, 8), dtype=np.float32,
+        )
+        if self._use_cuda_autocast:
+            self._host_input = torch.empty(
+                (new_cap, NUM_INPUT_PLANES, 8, 8),
+                dtype=torch.float32,
+                pin_memory=True,
+            )
+        else:
+            self._host_input = None
 
     @torch.inference_mode()
     def evaluate(self, board: chess.Board) -> tuple[np.ndarray, float]:
@@ -94,8 +114,17 @@ class NetEvaluator:
 
     @torch.inference_mode()
     def evaluate_batch(self, boards: list[chess.Board]) -> tuple[np.ndarray, np.ndarray]:
-        x = np.stack([board_to_planes(b) for b in boards])
-        x = torch.from_numpy(x).to(self.device)
+        n = len(boards)
+        if n == 0:
+            return np.zeros((0, POLICY_SIZE), dtype=np.float32), np.zeros(0, dtype=np.float32)
+        self._ensure_batch_buffers(n)
+        assert self._planes_buf is not None
+        fill_planes_batch(boards, self._planes_buf[:n])
+        if self._host_input is not None:
+            self._host_input[:n].copy_(torch.from_numpy(self._planes_buf[:n]))
+            x = self._host_input[:n].to(self.device, non_blocking=True)
+        else:
+            x = torch.from_numpy(self._planes_buf[:n]).to(self.device)
         if self._use_cuda_autocast:
             with torch.autocast(device_type="cuda", dtype=torch.float16):
                 logits, value_logits = self.net(x)

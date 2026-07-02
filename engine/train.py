@@ -637,6 +637,8 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--resume", default=None, help="checkpoint to resume from")
+    parser.add_argument("--reset-optimizer", action="store_true",
+                        help="do not restore Adam state from checkpoint (fresh optimizer on resume)")
     parser.add_argument("--checkpoint-dir", default=None)
     # Per-iteration workload overrides (lower these for faster CPU iterations).
     parser.add_argument("--games", type=int, default=None, help="self-play games per iteration")
@@ -682,6 +684,8 @@ def main() -> None:
                         help="minimum learning rate for cosine schedule")
     parser.add_argument("--lr-total-iters", type=int, default=None,
                         help="iterations spanned by cosine decay")
+    parser.add_argument("--lr-warmup-iters", type=int, default=None,
+                        help="iterations before cosine decay begins (also short warmup ramp if small)")
     parser.add_argument("--grad-clip", type=float, default=None,
                         help="gradient clip norm (default: cfg.train.grad_clip_norm)")
     parser.add_argument("--syzygy-path", type=str, default=None,
@@ -736,6 +740,8 @@ def main() -> None:
         cfg.train.lr_min = args.lr_min
     if args.lr_total_iters is not None:
         cfg.train.lr_total_iters = args.lr_total_iters
+    if args.lr_warmup_iters is not None:
+        cfg.train.lr_warmup_iters = args.lr_warmup_iters
     if args.grad_clip is not None:
         cfg.train.grad_clip_norm = args.grad_clip
     if args.syzygy_path:
@@ -807,9 +813,12 @@ def main() -> None:
 
     optimizer = torch.optim.Adam(net.parameters(), lr=cfg.train.learning_rate,
                                  weight_decay=cfg.train.weight_decay)
-    if state is not None and isinstance(state, dict) and "optimizer" in state:
+    if (state is not None and isinstance(state, dict) and "optimizer" in state
+            and not args.reset_optimizer):
         optimizer.load_state_dict(state["optimizer"])
         print("resumed optimizer state")
+    elif args.reset_optimizer:
+        print("reset optimizer state (fresh Adam)")
     scaler: torch.cuda.amp.GradScaler | None = None
     if args.device.startswith("cuda"):
         scaler = torch.cuda.amp.GradScaler()

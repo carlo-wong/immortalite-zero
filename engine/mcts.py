@@ -186,15 +186,19 @@ class MCTS:
         c_puct = self.cfg.c_puct
         sqrt_n = math.sqrt(node.N)
         best_score = -float("inf")
-        best = None
+        best_idx = None
+        best_child = None
         for idx, child in node.children.items():
+            child_n = child.N
             q = -child.Q  # child value is from opponent's perspective
-            u = c_puct * child.prior * sqrt_n / (1 + child.N)
+            u = c_puct * child.prior * sqrt_n / (1 + child_n)
             score = q + u
             if score > best_score:
                 best_score = score
-                best = (idx, child)
-        return best
+                best_idx = idx
+                best_child = child
+        assert best_idx is not None and best_child is not None
+        return best_idx, best_child
 
     def _add_dirichlet_noise(self, root: _Node) -> None:
         idxs = list(root.children.keys())

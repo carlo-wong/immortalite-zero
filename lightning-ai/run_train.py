@@ -32,8 +32,8 @@ TRAIN = {
     "train_steps": 800,
     "concurrency": 128,
     "selfplay_workers": 1,
-    "replay_buffer": 200_000,
-    "replay_window": 200_000,
+    "replay_buffer": 120_000,
+    "replay_window": 120_000,
     "draw_penalty": 1 / 3,
     "gate_every": 20,
     "gate_games": 128,
@@ -42,11 +42,15 @@ TRAIN = {
     "iterations": 1000,
     "resume": True,
     "resign": False,
-    "lr": 2.5e-4,
-    "lr_min": 2.5e-4,
-    "lr_total_iters": 1000,
+    "lr": 5e-4,
+    "lr_min": 2e-4,
+    # Decay from peak at iter 161 through iter 196 (35 iters); warmup_iters=161 skips early warmup.
+    "lr_total_iters": 196,
+    "lr_warmup_iters": 161,
     "grad_clip": 10.0,
 }
+# Set True only for the first resume at iter 161 (Phase 2A); default False.
+RESET_OPTIMIZER = False
 RESIGN_THRESHOLD = -0.90
 RESIGN_PLIES = 3
 RESIGN_MIN_MOVES = 20
@@ -99,10 +103,13 @@ def main() -> None:
         "--lr", str(TRAIN["lr"]),
         "--lr-min", str(TRAIN["lr_min"]),
         "--lr-total-iters", str(TRAIN["lr_total_iters"]),
+        "--lr-warmup-iters", str(TRAIN["lr_warmup_iters"]),
         "--grad-clip", str(TRAIN["grad_clip"]),
         "--checkpoint-dir", paths.ckpt_dir,
         *resume_args,
     ]
+    if RESET_OPTIMIZER:
+        cmd.append("--reset-optimizer")
 
     print("repo:       ", paths.repo_dir)
     print("checkpoints:", paths.ckpt_dir)
