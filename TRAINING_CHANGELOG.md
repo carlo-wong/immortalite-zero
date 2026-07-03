@@ -15,9 +15,10 @@ Gates run every 20 iters vs the checkpoint **20 iters ago**. Edit only the `TRAI
 | **100** | 128 | 800 | 128 | 1 | 200k | 64 | **2.5e-4 flat** | consolidate after hot LR |
 | **120** | 256 | 1600 | 256 | 1 | 200k | 512 SPRT | 2.5e-4 flat | scale-up trial; reverted at 122 |
 | **122** | **128** | **800** | **128** | **1** | 200k | **128 SPRT** | 2.5e-4 flat | faster s/game; gate cap matches batch |
-| **161** | **128** | **800** | **128** | **1** | **120k** | **128 SPRT** | **5e-4→2e-4** (161–196) | Phase 2A: fresher replay, fresh Adam (`--reset-optimizer` once), 100 sims; after Bucket A code opts |
+| **161**‡ | **128** | **800** | **128** | **1** | **120k** | **128 SPRT** | **5e-4→2e-4** (161–196) | Phase 2A — **reverted** (regressed ~69 Elo vs 160); shards/checkpoints 161–180 removed |
+| **161** | **128** | **800** | **128** | **1** | **200k** | **256 SPRT** | **2.5e-4 flat** | rewind to `ckpt_iter_0160`; **200 sims** only; resign off |
 
-**Current row:** start **161** — 128 games, 800 train steps, concurrency 128, replay 120k, LR warm restart (peak 5e-4 at iter 161, min 2e-4 by iter 196), 100 sims, gate 128×100. Resume from `ckpt_iter_0160` with `--reset-optimizer` on first launch only.
+**Current row:** start **161** (from iter **160** checkpoint) — 200 sims self-play + gate, 256-game SPRT cap, 200k replay, 2.5e-4 flat LR. Resume from `latest.pt` (= `ckpt_iter_0160.pt`). Do **not** use `--reset-optimizer`.
 
 Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net only with a new `--checkpoint-dir`.
 
@@ -78,12 +79,15 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 - **SPRT gate cap 128** (was 512); still early-stops when H₀/H₁ decided.
 - LR 2.5e-4 flat; replay 200k (~12 iters at 128 games); draw 1/3; resign off; gate sims 100.
 
-### Iter 161 — Phase 2A (cheap plateau fix, after Bucket A code opts)
+### Iter 161 — Phase 2A (reverted)
 
-- Resume from **`ckpt_iter_0160`** with **`--reset-optimizer`** once (fresh Adam).
-- **Replay buffer/window 120k** (~7 iters at 128 games).
-- **LR 5e-4 → 2e-4** cosine over iters 161–196 (`lr_warmup_iters=161`, `lr_total_iters=196`).
-- **100 sims** self-play and gate unchanged; 128 games.
-- If gate 180 vs 160 clears ~0.55, skip Phase 2B (200 sims). Else iter 181+: sims/gate_sims 200.
+- Bundled LR warm restart, optimizer reset, and 120k replay — gate 180 vs 160 **−69 Elo**; training metrics improved but strength collapsed (entropy collapse). Run discarded; resume from **`ckpt_iter_0160`**.
 
-Last updated: 2026-07-02.
+### Iter 161 — sims 200 experiment (current)
+
+- Rewind to **`ckpt_iter_0160`**; delete shards/checkpoints/metrics for iters 161–180.
+- **Only change vs 141–160 recipe:** self-play and gate **200 MCTS sims** (was 100).
+- **256-game SPRT cap** (was 128) for tighter gate estimates.
+- **200k replay**, **2.5e-4 flat LR**, resign off, optimizer state preserved.
+
+Last updated: 2026-07-04.

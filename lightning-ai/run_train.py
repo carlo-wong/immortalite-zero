@@ -26,30 +26,28 @@ from paths import ensure_ckpt_dir, resolve_paths, validate_syzygy
 
 # --- edit training settings here (matches lightning-ai/train.ipynb cell 5) ---
 TRAIN = {
-    "sims": 100,
-    "gate_sims": 100,
+    "sims": 200,
+    "gate_sims": 200,
     "games": 128,
     "train_steps": 800,
     "concurrency": 128,
     "selfplay_workers": 1,
-    "replay_buffer": 120_000,
-    "replay_window": 120_000,
+    "replay_buffer": 200_000,
+    "replay_window": 200_000,
     "draw_penalty": 1 / 3,
     "gate_every": 20,
-    "gate_games": 128,
+    "gate_games": 256,
     "gate_exploration_moves": 20,
     "save_every": 10,
     "iterations": 1000,
     "resume": True,
     "resign": False,
-    "lr": 5e-4,
-    "lr_min": 2e-4,
-    # Decay from peak at iter 161 through iter 196 (35 iters); warmup_iters=161 skips early warmup.
-    "lr_total_iters": 196,
-    "lr_warmup_iters": 161,
+    "lr": 2.5e-4,
+    "lr_min": 2.5e-4,
+    "lr_total_iters": 10_000,
+    "lr_warmup_iters": 0,
     "grad_clip": 10.0,
 }
-# Set True only for the first resume at iter 161 (Phase 2A); default False.
 RESET_OPTIMIZER = False
 RESIGN_THRESHOLD = -0.90
 RESIGN_PLIES = 3
