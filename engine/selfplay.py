@@ -28,6 +28,13 @@ class Sample:
     policy: np.ndarray      # (POLICY_SIZE,)
     player: chess.Color
     value: float = 0.0      # filled in once the game finishes
+    source_iter: int = 0
+
+
+@dataclass
+class EvalRequest:
+    board: chess.Board
+    search_turn: chess.Color
 
 
 @dataclass
@@ -49,8 +56,8 @@ _DRAW_TERMINATION_SET = set(_DRAW_TERMINATION_NAMES.values())
 
 @dataclass
 class _ActiveGame:
-    gen: Generator[chess.Board, tuple[np.ndarray, float], GameResult]
-    pending_board: chess.Board
+    gen: Generator[EvalRequest, tuple[np.ndarray, float], GameResult]
+    pending: EvalRequest
 
 
 def _tablebase_adjudication(board: chess.Board, tablebase: Any | None, max_pieces: int
@@ -73,7 +80,8 @@ def _tablebase_adjudication(board: chess.Board, tablebase: Any | None, max_piece
 def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
                   exploration_moves: int = _EXPLORATION_MOVES,
                   tablebase: Any | None = None,
-                  ) -> Generator[chess.Board, tuple[np.ndarray, float], GameResult]:
+                  source_iter: int = 0,
+                  ) -> Generator[EvalRequest, tuple[np.ndarray, float], GameResult]:
     board = chess.Board()
     mcts = MCTS(None, cfg.mcts)
     samples: list[Sample] = []
@@ -82,7 +90,7 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
     resigned_winner: chess.Color | None = None
     tablebase_winner: chess.Color | None = None
     tablebase_draw = False
-    low_value_streak = 0
+    low_value_streak = {chess.WHITE: 0, chess.BLACK: 0}
     last_root_value = 0.0
 
     while not board.is_game_over(claim_draw=True) and move_count < cfg.train.max_game_moves:
@@ -94,10 +102,11 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
             tablebase_draw = True
             break
 
+        search_turn = board.turn
         search = mcts.search_gen(board, simulations=simulations, add_noise=add_noise)
         req = next(search)
         while True:
-            logits, value = yield req
+            logits, value = yield EvalRequest(req, search_turn)
             try:
                 req = search.send((logits, value))
             except StopIteration as stop:
@@ -108,24 +117,27 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
             break
 
         improved = result.improved_policy()
-        last_root_value = float(result.root_value)
+        last_root_value = float(result.searched_root_q)
         policy = np.zeros(POLICY_SIZE, dtype=np.float32)
         for idx, p in zip(result.indices, improved):
             policy[idx] = p
-        samples.append(Sample(board_to_planes(board).astype(np.float16), policy.astype(np.float16), board.turn))
+        samples.append(Sample(
+            board_to_planes(board).astype(np.float16),
+            policy.astype(np.float16),
+            board.turn,
+            source_iter=source_iter,
+        ))
 
         resign_enabled = cfg.train.resign_plies > 0 and cfg.train.resign_threshold >= -1.0
         if resign_enabled and move_count >= cfg.train.resign_min_moves:
-            if result.root_value <= cfg.train.resign_threshold:
-                low_value_streak += 1
+            player = board.turn
+            if result.searched_root_q <= cfg.train.resign_threshold:
+                low_value_streak[player] += 1
             else:
-                low_value_streak = 0
-            if low_value_streak >= cfg.train.resign_plies:
-                # Side to move resigns; opponent is the winner.
-                resigned_winner = not board.turn
+                low_value_streak[player] = 0
+            if low_value_streak[player] >= cfg.train.resign_plies:
+                resigned_winner = not player
                 break
-        else:
-            low_value_streak = 0
 
         if move_count < exploration_moves:
             choice = np.random.choice(len(result.moves), p=improved / improved.sum())
@@ -157,11 +169,11 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
 
 
 def play_game(evaluator: NetEvaluator, cfg: Config, simulations: int,
-              tablebase: Any | None = None) -> GameResult:
-    gen = play_game_gen(cfg, simulations, tablebase=tablebase)
+              tablebase: Any | None = None, source_iter: int = 0) -> GameResult:
+    gen = play_game_gen(cfg, simulations, tablebase=tablebase, source_iter=source_iter)
     req = next(gen)
     while True:
-        logits, value = evaluator.evaluate(req)
+        logits, value = evaluator.evaluate(req.board)
         try:
             req = gen.send((logits, value))
         except StopIteration as stop:
@@ -186,10 +198,10 @@ def play_games_batched(evaluator: NetEvaluator, cfg: Config, simulations: int,
     while len(completed) < num_games:
         while launched < num_games and len(active) < concurrency:
             gen = play_game_gen(cfg, simulations, tablebase=tablebase)
-            active.append(_ActiveGame(gen=gen, pending_board=next(gen)))
+            active.append(_ActiveGame(gen=gen, pending=next(gen)))
             launched += 1
 
-        boards = [state.pending_board for state in active]
+        boards = [state.pending.board for state in active]
         logits_batch, values_batch = evaluator.evaluate_batch(boards)
         if on_step is not None:
             on_step(len(active))
@@ -198,7 +210,7 @@ def play_games_batched(evaluator: NetEvaluator, cfg: Config, simulations: int,
         for state, logits, value in zip(active, logits_batch, values_batch):
             try:
                 pending = state.gen.send((logits, float(value)))
-                next_active.append(_ActiveGame(gen=state.gen, pending_board=pending))
+                next_active.append(_ActiveGame(gen=state.gen, pending=pending))
             except StopIteration as stop:
                 game = stop.value
                 completed.append(game)

@@ -3,12 +3,13 @@ import tempfile
 from unittest.mock import patch
 
 import chess
+import numpy as np
 import pytest
 import pandas as pd
 
 from engine.config import Config
 from engine.network import ChessNet
-from engine.selfplay import GameResult
+from engine.selfplay import EvalRequest, GameResult
 from engine.train import (
     play_match,
     _log_gate_metrics,
@@ -37,7 +38,7 @@ def _make_fake_play_game_gen(recorded: list[dict]):
         result = GameResult(samples=[], termination="stalemate")
 
         def inner():
-            yield board
+            yield EvalRequest(board, board.turn)
             return result
 
         return inner()
@@ -235,3 +236,56 @@ def test_snapshot_at_iter_returns_none_when_missing() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         assert _snapshot_at_iter(tmpdir, 10) is None
         assert _snapshot_at_iter(tmpdir, -1) is None
+
+
+def test_play_match_routes_eval_by_search_turn_not_leaf_turn() -> None:
+    """All NN evals in one search must use the searching player's net."""
+    net_a, net_b, cfg = _tiny_nets()
+    cfg.train.selfplay_concurrency = 1
+
+    leaf_black_stm = chess.Board(
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+    )
+    a_calls = 0
+    b_calls = 0
+
+    def fake_play_game_gen(*args, **kwargs):
+        del args, kwargs
+        result = GameResult(samples=[], termination="stalemate")
+
+        def inner():
+            yield EvalRequest(chess.Board(), chess.WHITE)
+            yield EvalRequest(leaf_black_stm, chess.WHITE)
+            return result
+
+        return inner()
+
+    class MockEvalA:
+        def evaluate_batch(self, boards):
+            nonlocal a_calls
+            a_calls += len(boards)
+            n = len(boards)
+            logits = [np.zeros(4672, dtype=np.float32) for _ in range(n)]
+            values = [0.0 for _ in range(n)]
+            return logits, values
+
+    class MockEvalB:
+        def evaluate_batch(self, boards):
+            nonlocal b_calls
+            b_calls += len(boards)
+            n = len(boards)
+            logits = [np.zeros(4672, dtype=np.float32) for _ in range(n)]
+            values = [0.0 for _ in range(n)]
+            return logits, values
+
+    def net_eval_factory(net, device):
+        del device
+        return MockEvalA() if net is net_a else MockEvalB()
+
+    with patch("engine.train.play_game_gen", side_effect=fake_play_game_gen):
+        with patch("engine.train.NetEvaluator", side_effect=net_eval_factory):
+            metrics = play_match(net_a, net_b, cfg, n_games=1, sims=2, device="cpu")
+
+    assert metrics["games_played"] == 1
+    assert a_calls == 2
+    assert b_calls == 0

@@ -59,6 +59,7 @@ class SearchResult:
     visits: np.ndarray
     q_values: np.ndarray          # from side-to-move perspective
     priors: np.ndarray
+    clean_priors: np.ndarray
     root_value: float
     _root: _Node
     _board: chess.Board
@@ -66,13 +67,24 @@ class SearchResult:
 
     def visit_policy(self) -> np.ndarray:
         total = self.visits.sum()
-        return self.visits / total if total > 0 else self.priors
+        return self.visits / total if total > 0 else self.clean_priors
+
+    @property
+    def searched_root_q(self) -> float:
+        if self.q_values.size:
+            return float(np.min(self.q_values))
+        if self._root.N > 0:
+            return float(self._root.Q)
+        return float(self.root_value)
 
     def improved_policy(self) -> np.ndarray:
         """Gumbel completed-Q improved policy over the considered moves."""
         max_n = self.visits.max() if self.visits.size else 0.0
         sigma = (self._cfg.gumbel_c_visit + max_n) * self._cfg.gumbel_c_scale
-        logits = np.log(np.clip(self.priors, 1e-9, None)) + sigma * self.q_values
+        q = self.q_values
+        q_span = float(q.max() - q.min())
+        q_norm = (q - q.min()) / q_span if q_span > 0 else np.zeros_like(q)
+        logits = np.log(np.clip(self.clean_priors, 1e-9, None)) + sigma * q_norm
         return _softmax(logits)
 
     def best_move(self) -> chess.Move:
@@ -120,10 +132,11 @@ class MCTS:
         root = _Node(0.0)
         root_terminal, root_terminal_value = self._terminal_eval(root, board, root_turn)
         if root_terminal:
-            return self._collect(root, board, root_terminal_value)
+            return self._collect(root, board, root_terminal_value, {})
 
         logits, value = yield board
         root_value = self._expand_from_eval(root, board, logits, value)
+        root_clean_priors = {idx: child.prior for idx, child in root.children.items()}
 
         if add_noise and root.children:
             self._add_dirichlet_noise(root)
@@ -162,7 +175,7 @@ class MCTS:
             for _ in range(depth):
                 board.pop()
 
-        return self._collect(root, board, root_value)
+        return self._collect(root, board, root_value, root_clean_priors)
 
     def run(self, board: chess.Board, simulations: int | None = None,
             add_noise: bool = False) -> SearchResult:
@@ -239,8 +252,9 @@ class MCTS:
         # backs up as a small negative value for the root side to move.
         return -contempt if board.turn == root_turn else contempt
 
-    def _collect(self, root: _Node, board: chess.Board, root_value: float) -> SearchResult:
-        moves, indices, visits, qs, priors = [], [], [], [], []
+    def _collect(self, root: _Node, board: chess.Board, root_value: float,
+                 clean_priors: dict[int, float]) -> SearchResult:
+        moves, indices, visits, qs, priors, clean = [], [], [], [], [], []
         for idx, child in root.children.items():
             move = index_to_move(idx, board)
             if move is None:
@@ -253,12 +267,14 @@ class MCTS:
             q = -child.Q if child.N > 0 else root_value
             qs.append(q)
             priors.append(child.prior)
+            clean.append(clean_priors.get(idx, child.prior))
         return SearchResult(
             moves=moves,
             indices=indices,
             visits=np.array(visits, dtype=np.float64),
             q_values=np.array(qs, dtype=np.float64),
             priors=np.array(priors, dtype=np.float64),
+            clean_priors=np.array(clean, dtype=np.float64),
             root_value=root_value,
             _root=root,
             _board=board,

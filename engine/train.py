@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
-import random
+import subprocess
 import tempfile
 import time
 import zipfile
@@ -38,7 +38,7 @@ from .sprt import (
     sprt_llr,
     sprt_verdict_label,
 )
-from .selfplay import GameResult, Sample, play_game_gen, play_games_batched, play_games_parallel
+from .selfplay import EvalRequest, GameResult, Sample, play_game_gen, play_games_batched, play_games_parallel
 
 _SAMPLE_SHARD_PREFIX = "samples_iter_"
 _SAMPLE_SHARD_SUFFIX = ".npz"
@@ -195,7 +195,11 @@ def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
                  value_std: float, winrate_vs_prev: float,
                  learning_rate: float, games: int, train_steps: int,
                  batch_size: int, buffer_size: int,
-                 termination_counts: dict[str, int]) -> None:
+                 termination_counts: dict[str, int],
+                 winrate_quick: float = float("nan"),
+                 gpu_util_pct: float = float("nan"),
+                 buffer_min_iter: int = 0,
+                 buffer_max_iter: int = 0) -> None:
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = os.path.join(ckpt_dir, "metrics.csv")
     new = not os.path.exists(path)
@@ -207,7 +211,8 @@ def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
                 "policy_entropy,value_sign_acc,policy_top1_agree,grad_norm,"
                 "mean_game_len,decisive_rate,white_win_rate,draw_rate,"
                 "max_moves_trunc_rate,value_mean,value_std,winrate_vs_prev,"
-                "learning_rate,games,train_steps,batch_size,buffer_size,terminations\n"
+                "learning_rate,games,train_steps,batch_size,buffer_size,terminations,"
+                "winrate_quick,gpu_util_pct,buffer_min_iter,buffer_max_iter\n"
             )
         f.write(
             f"{it},{sims},{samples},{dt:.1f},{selfplay_seconds:.1f},{train_seconds:.1f},"
@@ -216,7 +221,8 @@ def _log_metrics(ckpt_dir: str, it: int, sims: int, samples: int, dt: float, *,
             f"{mean_game_len:.6f},{decisive_rate:.6f},{white_win_rate:.6f},{draw_rate:.6f},"
             f"{max_moves_trunc_rate:.6f},{value_mean:.6f},{value_std:.6f},{winrate_vs_prev:.6f},"
             f"{learning_rate:.6e},{games},{train_steps},{batch_size},{buffer_size},"
-            f"{terminations}\n"
+            f"{terminations},"
+            f"{winrate_quick:.6f},{gpu_util_pct:.6f},{buffer_min_iter},{buffer_max_iter}\n"
         )
 
 
@@ -290,6 +296,64 @@ GATE_CSV_HEADER = (
     "winrate,wins,draws,losses,mean_game_len,terminations,"
     "elo,elo_lower,elo_upper,los,llr,decision,verdict\n"
 )
+
+ANCHOR_CSV_HEADER = (
+    "iter,anchor_iter,games,winrate,elo,elo_lower,elo_upper,los\n"
+)
+
+
+def _read_gpu_util_pct() -> float:
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+            text=True,
+            timeout=5,
+        )
+        return float(out.strip().split("\n")[0])
+    except (FileNotFoundError, subprocess.SubprocessError, ValueError, IndexError, OSError):
+        return float("nan")
+
+
+def _buffer_iter_range(buffer: deque[Sample]) -> tuple[int, int]:
+    if not buffer:
+        return 0, 0
+    iters = [s.source_iter for s in buffer]
+    return min(iters), max(iters)
+
+
+def _load_net_from_snapshot(snapshot_path: str, cfg: Config, device: str) -> ChessNet | None:
+    state = torch.load(snapshot_path, map_location=device)
+    if not isinstance(state, dict) or "model" not in state:
+        return None
+    prev_encoding_version = int(state.get("encoding_version", 1))
+    if prev_encoding_version != ENCODING_VERSION:
+        return None
+    prev_net_cfg = cfg.net
+    if "net" in state:
+        prev_net_cfg = NetConfig(**state["net"])
+    prev_net = ChessNet(prev_net_cfg).to(device)
+    _load_matching_state_dict(prev_net, state["model"], label="snapshot load", verbose=False)
+    prev_net.eval()
+    return prev_net
+
+
+def _log_anchor_metrics(ckpt_dir: str, it: int, anchor_iter: int,
+                        metrics: dict, games: int) -> None:
+    os.makedirs(ckpt_dir or ".", exist_ok=True)
+    path = os.path.join(ckpt_dir, "metrics_anchors.csv")
+    new = not os.path.exists(path)
+    wins = metrics["wins_as_white"] + metrics["wins_as_black"]
+    losses = metrics["losses_as_white"] + metrics["losses_as_black"]
+    draws = metrics["draws_as_white"] + metrics["draws_as_black"]
+    elo, elo_lower, elo_upper, los = sprt_elo(wins, draws, losses)
+    with open(path, "a", encoding="utf-8") as f:
+        if new:
+            f.write(ANCHOR_CSV_HEADER)
+        f.write(
+            f"{it},{anchor_iter},{games},"
+            f"{metrics['winrate']:.6f},"
+            f"{elo:.2f},{elo_lower:.2f},{elo_upper:.2f},{los:.6f}\n"
+        )
 
 
 def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games: int) -> None:
@@ -422,7 +486,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
 
     gate_bar = tqdm(total=n_games, desc=f"gate ({n_games} games)", unit="game", leave=False)
     concurrency = max(1, min(n_games, cfg.train.selfplay_concurrency))
-    active: list[tuple[object, chess.Board, bool]] = []
+    active: list[tuple[object, EvalRequest, bool]] = []
     launched = 0
     completed = 0
     sprt_lower, sprt_upper = sprt_bounds(sprt_alpha, sprt_beta) if sprt else (float("nan"), float("nan"))
@@ -450,14 +514,14 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
         a_boards: list[chess.Board] = []
         b_indices: list[int] = []
         b_boards: list[chess.Board] = []
-        for idx, (_, pending_board, a_is_white) in enumerate(active):
-            a_to_move = (pending_board.turn == a_is_white)
-            if a_to_move:
+        for idx, (_, pending, a_is_white) in enumerate(active):
+            search_uses_a = (pending.search_turn == a_is_white)
+            if search_uses_a:
                 a_indices.append(idx)
-                a_boards.append(pending_board)
+                a_boards.append(pending.board)
             else:
                 b_indices.append(idx)
-                b_boards.append(pending_board)
+                b_boards.append(pending.board)
 
         pending_eval: dict[int, tuple[np.ndarray, float]] = {}
         if a_boards:
@@ -469,7 +533,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             for idx, logits, value in zip(b_indices, b_logits_batch, b_values_batch):
                 pending_eval[idx] = (logits, float(value))
 
-        next_active: list[tuple[object, chess.Board, bool]] = []
+        next_active: list[tuple[object, EvalRequest, bool]] = []
         for idx, (gen, _, a_is_white) in enumerate(active):
             logits, value = pending_eval[idx]
             try:
@@ -550,6 +614,7 @@ def _save_sample_shard(ckpt_dir: str, iteration: int, samples: list[Sample]) -> 
     policies = np.stack([s.policy for s in samples]).astype(np.float16)
     players = np.array([bool(s.player) for s in samples], dtype=np.bool_)
     values = np.array([s.value for s in samples], dtype=np.float32)
+    source_iters = np.array([s.source_iter for s in samples], dtype=np.int32)
     fd, tmp_path = tempfile.mkstemp(dir=ckpt_dir, suffix=".npz")
     os.close(fd)
     try:
@@ -559,6 +624,7 @@ def _save_sample_shard(ckpt_dir: str, iteration: int, samples: list[Sample]) -> 
             policies=policies,
             players=players,
             values=values,
+            source_iters=source_iters,
             encoding_version=np.array([ENCODING_VERSION], dtype=np.int16),
         )
         os.replace(tmp_path, path)
@@ -586,14 +652,17 @@ def _load_sample_shard(path: str) -> list[Sample]:
             policies = data["policies"] if "policies" in data else data["policy"]
             players = data["players"] if "players" in data else data["player"]
             values = data["values"] if "values" in data else data["value"]
+            source_iters = data["source_iters"] if "source_iters" in data else None
             samples: list[Sample] = []
             for i in range(values.shape[0]):
+                source_iter = int(source_iters[i]) if source_iters is not None else 0
                 samples.append(
                     Sample(
                         planes=planes[i],
                         policy=policies[i],
                         player=bool(players[i]),
                         value=float(values[i]),
+                        source_iter=source_iter,
                     )
                 )
             return samples
@@ -678,6 +747,14 @@ def main() -> None:
                         help="override sims/move for gate matches (defaults to self-play sims)")
     parser.add_argument("--gate-exploration-moves", type=int, default=10,
                         help="sample moves for first N plies in gate games")
+    parser.add_argument("--gate-anchor-iter", type=int, default=60,
+                        help="also gate vs this frozen checkpoint iter (0 = off)")
+    parser.add_argument("--gate-anchor-games", type=int, default=30,
+                        help="games for anchor checkpoint gate")
+    parser.add_argument("--quick-eval-games", type=int, default=16,
+                        help="lightweight eval games each iter vs iter-lag snapshot (0 = off)")
+    parser.add_argument("--quick-eval-lag", type=int, default=10,
+                        help="compare current net to checkpoint at iter minus this lag")
     parser.add_argument("--lr", type=float, default=None,
                         help="override learning rate")
     parser.add_argument("--lr-min", type=float, default=None,
@@ -777,8 +854,13 @@ def main() -> None:
         f"resign_min_moves={cfg.train.resign_min_moves} "
         f"gate_games={args.gate_games} "
         f"gate_sims={args.gate_sims if args.gate_sims is not None else 'match-selfplay'} "
-        f"gate_exploration_moves={args.gate_exploration_moves}"
+        f"gate_exploration_moves={args.gate_exploration_moves} "
+        f"gate_anchor_iter={args.gate_anchor_iter} "
+        f"quick_eval_games={args.quick_eval_games} "
+        f"quick_eval_lag={args.quick_eval_lag}"
     )
+    step_metrics_path = os.path.join(cfg.train.checkpoint_dir, "metrics_steps.csv")
+    print(f"step metrics: {step_metrics_path}")
 
     # When resuming, the checkpoint's own architecture wins over the CLI preset
     # (you cannot change net size mid-training). To train a fresh net of a
@@ -857,8 +939,13 @@ def main() -> None:
             n_games = cfg.train.games_per_iteration
             game_bar = tqdm(total=n_games, desc=f"iter {it} self-play", unit="game", leave=False)
 
+            def _tag_source_iter(samples: list[Sample]) -> None:
+                for s in samples:
+                    s.source_iter = it
+
             def _on_game(game: GameResult) -> None:
                 nonlocal new_samples
+                _tag_source_iter(game.samples)
                 buffer.extend(game.samples)
                 iteration_samples.extend(game.samples)
                 new_samples += len(game.samples)
@@ -888,6 +975,7 @@ def main() -> None:
                 buffer.extend(parallel_samples)
                 iteration_samples = parallel_samples
                 new_samples = len(parallel_samples)
+                _tag_source_iter(parallel_samples)
                 termination_counts = Counter(parallel_terms)
                 game_lengths = parallel_lengths
                 game_outcomes = parallel_outcomes
@@ -904,6 +992,8 @@ def main() -> None:
                 )
             game_bar.close()
             selfplay_dt = time.time() - t0
+            gpu_util_pct = _read_gpu_util_pct() if args.device.startswith("cuda") else float("nan")
+            buffer_min_iter, buffer_max_iter = _buffer_iter_range(buffer)
 
             _save_sample_shard(cfg.train.checkpoint_dir, it, iteration_samples)
 
@@ -968,6 +1058,30 @@ def main() -> None:
             value_mean = float(value_targets.mean()) if value_targets.size else float("nan")
             value_std = float(value_targets.std()) if value_targets.size else float("nan")
 
+            winrate_quick = float("nan")
+            if args.quick_eval_games > 0 and it > args.quick_eval_lag:
+                quick_it = it - args.quick_eval_lag
+                quick_snapshot = _snapshot_at_iter(cfg.train.checkpoint_dir, quick_it)
+                if quick_snapshot is not None:
+                    try:
+                        quick_net = _load_net_from_snapshot(quick_snapshot, cfg, args.device)
+                        if quick_net is not None:
+                            quick_sims = args.gate_sims if args.gate_sims is not None else sims
+                            quick_metrics = play_match(
+                                net,
+                                quick_net,
+                                cfg,
+                                n_games=args.quick_eval_games,
+                                sims=quick_sims,
+                                device=args.device,
+                                exploration_moves=args.gate_exploration_moves,
+                                tablebase=tablebase,
+                                sprt=False,
+                            )
+                            winrate_quick = float(quick_metrics["winrate"])
+                    except Exception as exc:
+                        print(f"quick eval iter {it}: failed ({exc})", flush=True)
+
             term_summary = ", ".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
             print(f"iter {it:3d} | sims {sims:3d} | games {cfg.train.games_per_iteration} "
                   f"| samples {new_samples:4d} | buffer {len(buffer):6d} "
@@ -1009,6 +1123,10 @@ def main() -> None:
                 batch_size=cfg.train.batch_size,
                 buffer_size=len(buffer),
                 termination_counts=dict(termination_counts),
+                winrate_quick=winrate_quick,
+                gpu_util_pct=gpu_util_pct,
+                buffer_min_iter=buffer_min_iter,
+                buffer_max_iter=buffer_max_iter,
             )
 
             if args.gate_every > 0 and it > 0 and it % args.gate_every == 0:
@@ -1078,6 +1196,55 @@ def main() -> None:
                                 _update_metrics_winrate_vs_prev(
                                     cfg.train.checkpoint_dir, it, winrate_vs_prev,
                                 )
+                                if args.gate_anchor_iter > 0:
+                                    anchor_snapshot = _snapshot_at_iter(
+                                        cfg.train.checkpoint_dir, args.gate_anchor_iter,
+                                    )
+                                    if anchor_snapshot is None:
+                                        print(
+                                            f"anchor gate iter {it}: skipped "
+                                            f"(no snapshot at iter {args.gate_anchor_iter})"
+                                        )
+                                    else:
+                                        try:
+                                            anchor_net = _load_net_from_snapshot(
+                                                anchor_snapshot, cfg, args.device,
+                                            )
+                                            if anchor_net is None:
+                                                print(
+                                                    f"anchor gate iter {it}: skipped "
+                                                    f"(invalid snapshot {anchor_snapshot})"
+                                                )
+                                            else:
+                                                anchor_metrics = play_match(
+                                                    net,
+                                                    anchor_net,
+                                                    cfg,
+                                                    n_games=args.gate_anchor_games,
+                                                    sims=gate_sims,
+                                                    device=args.device,
+                                                    exploration_moves=args.gate_exploration_moves,
+                                                    tablebase=tablebase,
+                                                    sprt=False,
+                                                )
+                                                _log_anchor_metrics(
+                                                    cfg.train.checkpoint_dir,
+                                                    it,
+                                                    args.gate_anchor_iter,
+                                                    anchor_metrics,
+                                                    args.gate_anchor_games,
+                                                )
+                                                print(
+                                                    f"anchor gate iter {it}: vs iter "
+                                                    f"{args.gate_anchor_iter} -> "
+                                                    f"{anchor_metrics['winrate']:.3f} "
+                                                    f"Elo {anchor_metrics['elo']:+.1f}"
+                                                )
+                                        except Exception as exc:
+                                            print(
+                                                f"anchor gate iter {it}: failed ({exc}); continuing",
+                                                flush=True,
+                                            )
                         else:
                             print(f"gate iter {it}: skipped (invalid snapshot {previous_snapshot})")
                 except Exception as exc:

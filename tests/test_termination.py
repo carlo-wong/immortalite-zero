@@ -20,14 +20,18 @@ from engine.selfplay import (
 
 
 class FakeEvaluator:
-    def __init__(self, value: float = 0.0):
+    def __init__(self, value: float = 0.0, *, value_for_turn: dict[chess.Color, float] | None = None):
         self.value = float(value)
+        self.value_for_turn = value_for_turn
         self.calls = 0
 
     def evaluate(self, board: chess.Board) -> tuple[np.ndarray, float]:
-        del board
         self.calls += 1
-        return np.zeros(POLICY_SIZE, dtype=np.float32), self.value
+        if self.value_for_turn is not None:
+            value = float(self.value_for_turn[board.turn])
+        else:
+            value = self.value
+        return np.zeros(POLICY_SIZE, dtype=np.float32), value
 
 
 def _sample_pair() -> list[Sample]:
@@ -132,7 +136,7 @@ def test_max_game_moves_bootstraps_from_final_root_value() -> None:
 
     assert game.termination == "max_moves"
     assert len(game.samples) == 1
-    assert all(np.isclose(s.value, 0.8) for s in game.samples)
+    assert np.isclose(game.samples[0].value, -0.8)
 
 
 def test_max_game_moves_bootstrap_flips_by_side_to_move() -> None:
@@ -145,8 +149,8 @@ def test_max_game_moves_bootstrap_flips_by_side_to_move() -> None:
     assert len(game.samples) == 2
     assert game.samples[0].player == chess.WHITE
     assert game.samples[1].player == chess.BLACK
-    assert np.isclose(game.samples[0].value, -0.6)
-    assert np.isclose(game.samples[1].value, 0.6)
+    assert np.isclose(game.samples[0].value, 0.6)
+    assert np.isclose(game.samples[1].value, -0.6)
 
 
 def test_mcts_treats_claimable_draws_as_terminal() -> None:
@@ -198,3 +202,43 @@ def test_tablebase_draw_adjudication_gets_draw_penalty() -> None:
     samples = _sample_pair()
     _assign_values(samples, None, termination, cfg, move_count=0)
     assert all(s.value == -cfg.train.draw_penalty for s in samples)
+
+
+def test_resign_streak_counts_per_player_plies() -> None:
+    cfg = Config()
+    cfg.train.resign_threshold = -0.9
+    cfg.train.resign_plies = 2
+    cfg.train.resign_min_moves = 0
+    cfg.train.max_game_moves = 40
+    cfg.mcts.simulations = 2
+
+    evaluator = FakeEvaluator(
+        value_for_turn={chess.WHITE: -0.95, chess.BLACK: 0.5},
+    )
+    game = play_game(evaluator, cfg, simulations=2)
+
+    assert game.termination == "resign"
+    assert len(game.samples) == 3
+
+
+def test_searched_root_q_used_for_max_moves_bootstrap() -> None:
+    cfg = Config()
+    cfg.train.max_game_moves = 1
+    cfg.mcts.simulations = 4
+
+    class ShiftingEvaluator:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def evaluate(self, board: chess.Board) -> tuple[np.ndarray, float]:
+            del board
+            self.calls += 1
+            value = 0.9 if self.calls == 1 else -0.4
+            return np.zeros(POLICY_SIZE, dtype=np.float32), value
+
+    game = play_game(ShiftingEvaluator(), cfg, simulations=4)
+
+    assert game.termination == "max_moves"
+    assert len(game.samples) == 1
+    assert np.isclose(game.samples[0].value, 0.0)
+    assert not np.isclose(game.samples[0].value, 0.9)
