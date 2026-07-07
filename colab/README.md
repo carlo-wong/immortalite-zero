@@ -47,7 +47,7 @@ Phase **161+** from iter **160** checkpoint — same as `lightning-ai/run_train.
 | `games` | 128 | full GPU batch width (`concurrency` matches) |
 | `train_steps` | 800 | ~6× sample reuse at 128 games |
 | `concurrency` | 128 | batched MCTS eval width (one GPU owner) |
-| `selfplay_workers` | 1 | single process; no multi-CUDA on one GPU |
+| `selfplay_workers` / `gate_workers` | **2** / **2** | matches Colab 2 vCPU; separate CUDA process per worker |
 | `replay_buffer` / `replay_window` | **200k** | ~12 iters at 128 games |
 | `draw_penalty` | 1/3 | football 3-1-0 shaping |
 | `resign` | False | no self-play resignation |

@@ -951,6 +951,7 @@ def main() -> None:
         f"games={cfg.train.games_per_iteration} "
         f"steps={cfg.train.train_steps_per_iteration} "
         f"concurrency={cfg.train.selfplay_concurrency} "
+        f"selfplay_workers={args.selfplay_workers} "
         f"max_moves={cfg.train.max_game_moves} "
         f"lr={cfg.train.learning_rate:.6f} "
         f"lr_min={cfg.train.lr_min:.6f} "
