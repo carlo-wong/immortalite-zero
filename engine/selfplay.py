@@ -5,6 +5,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import random
+import time
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable, Generator
@@ -330,11 +331,15 @@ def _selfplay_worker(payload: dict) -> tuple[
         game_lengths: list[int] = []
         game_outcomes: list[int] = []
 
+        games_done = payload.get("games_done")
+
         def _on_game(game: GameResult) -> None:
             samples.extend(game.samples)
             termination_counts[game.termination] += 1
             game_lengths.append(len(game.samples))
             game_outcomes.append(_winner_of_worker(game))
+            if games_done is not None:
+                games_done.value += 1
 
         play_games_batched(
             evaluator,
@@ -371,6 +376,7 @@ def play_games_parallel(
     workers: int,
     device: str,
     syzygy_path: str | None = None,
+    on_progress: Callable[[int], None] | None = None,
 ) -> tuple[list[Sample], Counter[str], list[int], list[int]]:
     if num_games <= 0:
         return [], Counter(), [], []
@@ -401,8 +407,20 @@ def play_games_parallel(
         })
 
     ctx = mp.get_context("spawn")
-    with ctx.Pool(processes=len(payloads)) as pool:
-        results = pool.map(_selfplay_worker, payloads)
+    with mp.Manager() as manager:
+        games_done = manager.Value("i", 0)
+        for payload in payloads:
+            payload["games_done"] = games_done
+
+        with ctx.Pool(processes=len(payloads)) as pool:
+            async_result = pool.map_async(_selfplay_worker, payloads)
+            while not async_result.ready():
+                if on_progress is not None:
+                    on_progress(int(games_done.value))
+                time.sleep(0.2)
+            results = async_result.get()
+            if on_progress is not None:
+                on_progress(num_games)
 
     all_samples: list[Sample] = []
     termination_counts: Counter[str] = Counter()
@@ -415,6 +433,274 @@ def play_games_parallel(
         game_outcomes.extend(outcomes)
 
     return all_samples, termination_counts, game_lengths, game_outcomes
+
+
+@dataclass
+class _MatchChunkStats:
+    score: float = 0.0
+    wins_w: int = 0
+    wins_b: int = 0
+    losses_w: int = 0
+    losses_b: int = 0
+    draws_w: int = 0
+    draws_b: int = 0
+    game_lengths: list[int] | None = None
+    termination_counts: Counter[str] | None = None
+
+    def __post_init__(self) -> None:
+        if self.game_lengths is None:
+            self.game_lengths = []
+        if self.termination_counts is None:
+            self.termination_counts = Counter()
+
+
+def _record_match_game(stats: _MatchChunkStats, game: GameResult, a_is_white: bool) -> None:
+    winner = _winner_of_worker(game)
+    stats.game_lengths.append(len(game.samples))
+    stats.termination_counts[game.termination] += 1
+    if winner == 0:
+        stats.score += 0.5
+        if a_is_white:
+            stats.draws_w += 1
+        else:
+            stats.draws_b += 1
+    elif (winner == 1 and a_is_white) or (winner == -1 and not a_is_white):
+        stats.score += 1.0
+        if a_is_white:
+            stats.wins_w += 1
+        else:
+            stats.wins_b += 1
+    else:
+        if a_is_white:
+            stats.losses_w += 1
+        else:
+            stats.losses_b += 1
+
+
+def _run_match_games(
+    eval_a: NetEvaluator,
+    eval_b: NetEvaluator,
+    match_cfg: Config,
+    sims: int,
+    n_games: int,
+    exploration_moves: int,
+    tablebase: Any | None,
+    *,
+    start_game_index: int = 0,
+    on_game_finished: Callable[[], None] | None = None,
+) -> _MatchChunkStats:
+    stats = _MatchChunkStats()
+    concurrency = max(1, min(n_games, match_cfg.train.selfplay_concurrency))
+    active: list[tuple[object, EvalRequest, bool]] = []
+    launched = 0
+
+    while launched < n_games or active:
+        while launched < n_games and len(active) < concurrency:
+            a_is_white = ((start_game_index + launched) % 2) == 0
+            gen = play_game_gen(
+                match_cfg,
+                sims,
+                add_noise=False,
+                exploration_moves=exploration_moves,
+                tablebase=tablebase,
+            )
+            active.append((gen, next(gen), a_is_white))
+            launched += 1
+
+        if not active:
+            break
+
+        a_indices: list[int] = []
+        a_boards: list[chess.Board] = []
+        b_indices: list[int] = []
+        b_boards: list[chess.Board] = []
+        for idx, (_, pending, a_is_white) in enumerate(active):
+            if pending.search_turn == a_is_white:
+                a_indices.append(idx)
+                a_boards.append(pending.board)
+            else:
+                b_indices.append(idx)
+                b_boards.append(pending.board)
+
+        pending_eval: dict[int, tuple[np.ndarray, float]] = {}
+        if a_boards:
+            a_logits_batch, a_values_batch = eval_a.evaluate_batch(a_boards)
+            for idx, logits, value in zip(a_indices, a_logits_batch, a_values_batch):
+                pending_eval[idx] = (logits, float(value))
+        if b_boards:
+            b_logits_batch, b_values_batch = eval_b.evaluate_batch(b_boards)
+            for idx, logits, value in zip(b_indices, b_logits_batch, b_values_batch):
+                pending_eval[idx] = (logits, float(value))
+
+        next_active: list[tuple[object, EvalRequest, bool]] = []
+        for idx, (gen, _, a_is_white) in enumerate(active):
+            logits, value = pending_eval[idx]
+            try:
+                pending = gen.send((logits, value))
+                next_active.append((gen, pending, a_is_white))
+            except StopIteration as stop:
+                _record_match_game(stats, stop.value, a_is_white)
+                if on_game_finished is not None:
+                    on_game_finished()
+        active = next_active
+
+    return stats
+
+
+def _match_worker(payload: dict) -> dict[str, Any]:
+    worker_id = int(payload["worker_id"])
+    n_games = int(payload["n_games"])
+    start_game_index = int(payload["start_game_index"])
+    weights_path_a = str(payload["weights_path_a"])
+    weights_path_b = str(payload["weights_path_b"])
+    net_cfg_a = NetConfig(**payload["net_cfg_a"])
+    net_cfg_b = NetConfig(**payload["net_cfg_b"])
+    cfg = _config_from_dict(payload["cfg_dict"])
+    sims = int(payload["sims"])
+    device = str(payload["device"])
+    syzygy_path = payload.get("syzygy_path")
+    exploration_moves = int(payload["exploration_moves"])
+    seed = int(payload["seed"])
+
+    torch.set_num_threads(1)
+    random.seed(seed)
+    np.random.seed(seed % (2**32 - 1))
+    torch.manual_seed(seed)
+
+    tablebase = None
+    if syzygy_path:
+        tablebase = chess.syzygy.open_tablebase(syzygy_path)
+
+    try:
+        net_a = ChessNet(net_cfg_a)
+        state_a = torch.load(weights_path_a, map_location=device)
+        model_a = state_a["model"] if isinstance(state_a, dict) and "model" in state_a else state_a
+        net_a.load_state_dict(model_a, strict=True)
+        net_a.to(device).eval()
+
+        net_b = ChessNet(net_cfg_b)
+        state_b = torch.load(weights_path_b, map_location=device)
+        model_b = state_b["model"] if isinstance(state_b, dict) and "model" in state_b else state_b
+        net_b.load_state_dict(model_b, strict=True)
+        net_b.to(device).eval()
+
+        eval_a = NetEvaluator(net_a, device=device)
+        eval_b = NetEvaluator(net_b, device=device)
+        games_done = payload.get("games_done")
+
+        def _on_game() -> None:
+            if games_done is not None:
+                games_done.value += 1
+
+        stats = _run_match_games(
+            eval_a,
+            eval_b,
+            cfg,
+            sims,
+            n_games,
+            exploration_moves,
+            tablebase,
+            start_game_index=start_game_index,
+            on_game_finished=_on_game,
+        )
+        return {
+            "score": stats.score,
+            "wins_w": stats.wins_w,
+            "wins_b": stats.wins_b,
+            "losses_w": stats.losses_w,
+            "losses_b": stats.losses_b,
+            "draws_w": stats.draws_w,
+            "draws_b": stats.draws_b,
+            "game_lengths": stats.game_lengths,
+            "termination_counts": dict(stats.termination_counts),
+        }
+    finally:
+        if tablebase is not None:
+            tablebase.close()
+
+
+def play_match_parallel(
+    match_cfg: Config,
+    net_cfg_a: NetConfig,
+    net_cfg_b: NetConfig,
+    weights_path_a: str,
+    weights_path_b: str,
+    n_games: int,
+    sims: int,
+    workers: int,
+    device: str,
+    exploration_moves: int,
+    syzygy_path: str | None = None,
+    on_progress: Callable[[int], None] | None = None,
+) -> _MatchChunkStats:
+    if n_games <= 0:
+        return _MatchChunkStats()
+    if workers <= 1:
+        raise ValueError("play_match_parallel requires workers > 1")
+
+    game_counts = _split_games(n_games, workers)
+    cfg_dict = _config_to_dict(match_cfg)
+    net_cfg_a_dict = {
+        "blocks": net_cfg_a.blocks,
+        "filters": net_cfg_a.filters,
+        "value_bins": net_cfg_a.value_bins,
+    }
+    net_cfg_b_dict = {
+        "blocks": net_cfg_b.blocks,
+        "filters": net_cfg_b.filters,
+        "value_bins": net_cfg_b.value_bins,
+    }
+
+    payloads = []
+    start_index = 0
+    for worker_id, n_worker_games in enumerate(game_counts):
+        seed = (os.getpid() * 2654435761 + worker_id * 1597334677) & 0xFFFFFFFF
+        payloads.append({
+            "worker_id": worker_id,
+            "n_games": n_worker_games,
+            "start_game_index": start_index,
+            "weights_path_a": weights_path_a,
+            "weights_path_b": weights_path_b,
+            "net_cfg_a": net_cfg_a_dict,
+            "net_cfg_b": net_cfg_b_dict,
+            "cfg_dict": cfg_dict,
+            "sims": sims,
+            "device": device,
+            "syzygy_path": syzygy_path,
+            "exploration_moves": exploration_moves,
+            "seed": seed,
+        })
+        start_index += n_worker_games
+
+    merged = _MatchChunkStats()
+    ctx = mp.get_context("spawn")
+    with mp.Manager() as manager:
+        games_done = manager.Value("i", 0)
+        for payload in payloads:
+            payload["games_done"] = games_done
+
+        with ctx.Pool(processes=len(payloads)) as pool:
+            async_result = pool.map_async(_match_worker, payloads)
+            while not async_result.ready():
+                if on_progress is not None:
+                    on_progress(int(games_done.value))
+                time.sleep(0.2)
+            results = async_result.get()
+            if on_progress is not None:
+                on_progress(n_games)
+
+    for chunk in results:
+        merged.score += float(chunk["score"])
+        merged.wins_w += int(chunk["wins_w"])
+        merged.wins_b += int(chunk["wins_b"])
+        merged.losses_w += int(chunk["losses_w"])
+        merged.losses_b += int(chunk["losses_b"])
+        merged.draws_w += int(chunk["draws_w"])
+        merged.draws_b += int(chunk["draws_b"])
+        merged.game_lengths.extend(chunk["game_lengths"])
+        merged.termination_counts.update(chunk["termination_counts"])
+
+    return merged
 
 
 def _termination_reason(outcome: chess.Outcome | None, *,

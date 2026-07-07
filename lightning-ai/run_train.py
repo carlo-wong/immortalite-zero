@@ -25,21 +25,23 @@ if _SCRIPT_DIR not in sys.path:
 from paths import ensure_ckpt_dir, resolve_paths, validate_syzygy
 
 # --- edit training settings here (matches lightning-ai/train.ipynb cell 5) ---
+STOP_INTERVAL = 20  # stop after completing iters 160, 180, 200, …
+
 TRAIN = {
     "sims": 200,
-    "gate_sims": 200,
+    "gate_sims": 200,  # manual gate (run_gate.py / notebook gate cell) only
     "games": 128,
     "train_steps": 800,
     "concurrency": 128,
-    "selfplay_workers": 1,
+    "selfplay_workers": 4,
     "replay_buffer": 200_000,
     "replay_window": 200_000,
     "draw_penalty": 1 / 3,
-    "gate_every": 20,
     "gate_games": 256,
+    "gate_workers": 4,
+    "gate_concurrency": 256,
     "gate_exploration_moves": 20,
     "save_every": 10,
-    "iterations": 1000,
     "resume": True,
     "resign": False,
     "lr": 2.5e-4,
@@ -52,6 +54,19 @@ RESET_OPTIMIZER = False
 RESIGN_THRESHOLD = -0.90
 RESIGN_PLIES = 3
 RESIGN_MIN_MOVES = 20
+
+
+def _training_span(resume_path: str, resume: bool, stop_interval: int) -> tuple[int, int, int]:
+    """Return (start_iter, end_iter, num_iterations). Stops after completing end_iter."""
+    start_iter = 0
+    if resume and os.path.exists(resume_path):
+        state = torch.load(resume_path, map_location="cpu")
+        start_iter = int(state.get("iteration", -1)) + 1
+    if start_iter % stop_interval == 0:
+        end_iter = start_iter
+    else:
+        end_iter = ((start_iter // stop_interval) + 1) * stop_interval
+    return start_iter, end_iter, end_iter - start_iter + 1
 
 
 def main() -> None:
@@ -71,6 +86,10 @@ def main() -> None:
         else:
             print("WARNING: resume=True but no latest.pt — starting at iter 0")
 
+    start_iter, end_iter, train_iterations = _training_span(
+        resume_path, TRAIN["resume"], STOP_INTERVAL,
+    )
+
     resign_args: list[str] = []
     if TRAIN["resign"]:
         resign_args = [
@@ -81,7 +100,7 @@ def main() -> None:
 
     cmd = [
         sys.executable, "-m", "engine.train",
-        "--iterations", str(TRAIN["iterations"]),
+        "--iterations", str(train_iterations),
         *preset,
         "--games", str(TRAIN["games"]),
         "--train-steps", str(TRAIN["train_steps"]),
@@ -94,10 +113,7 @@ def main() -> None:
         *resign_args,
         "--syzygy-path", paths.tb_dir,
         "--save-every", str(TRAIN["save_every"]),
-        "--gate-every", str(TRAIN["gate_every"]),
-        "--gate-games", str(TRAIN["gate_games"]),
-        "--gate-sims", str(TRAIN["gate_sims"]),
-        "--gate-exploration-moves", str(TRAIN["gate_exploration_moves"]),
+        "--gate-every", "0",
         "--lr", str(TRAIN["lr"]),
         "--lr-min", str(TRAIN["lr_min"]),
         "--lr-total-iters", str(TRAIN["lr_total_iters"]),
@@ -114,6 +130,10 @@ def main() -> None:
     print("syzygy:     ", paths.tb_dir, f"({rtbw} .rtbw)")
     print("CUDA:       ", has_cuda, device)
     print("TRAIN:      ", TRAIN)
+    print(
+        f"training span: iters {start_iter}..{end_iter} "
+        f"({train_iterations} iterations), stop_interval={STOP_INTERVAL}"
+    )
     print("command:    ", " ".join(cmd))
     print()
 

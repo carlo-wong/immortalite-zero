@@ -17,6 +17,7 @@ import zipfile
 from copy import deepcopy
 from collections import Counter, deque
 from dataclasses import asdict
+from typing import Callable
 
 import chess.syzygy
 import numpy as np
@@ -38,10 +39,33 @@ from .sprt import (
     sprt_llr,
     sprt_verdict_label,
 )
-from .selfplay import EvalRequest, GameResult, Sample, play_game_gen, play_games_batched, play_games_parallel
+from .selfplay import (
+    EvalRequest,
+    GameResult,
+    Sample,
+    play_game_gen,
+    play_games_batched,
+    play_games_parallel,
+    play_match_parallel,
+)
 
 _SAMPLE_SHARD_PREFIX = "samples_iter_"
 _SAMPLE_SHARD_SUFFIX = ".npz"
+
+
+def _tqdm_sync_progress(bar: tqdm, completed: int) -> None:
+    """Advance a tqdm bar to `completed` (safe for multi-worker polling in notebooks)."""
+    delta = int(completed) - int(bar.n)
+    if delta > 0:
+        bar.update(delta)
+
+
+def _net_cfg_from_module(net: ChessNet) -> NetConfig:
+    return NetConfig(
+        blocks=len(net.tower),
+        filters=int(net.stem[0].out_channels),
+        value_bins=int(net.value_bins),
+    )
 
 
 def _lr_for_iteration(cfg: Config, it: int) -> float:
@@ -417,6 +441,9 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
                sprt_elo1: float = ELO1,
                sprt_alpha: float = ALPHA,
                sprt_beta: float = BETA,
+               workers: int = 1,
+               on_progress: Callable[[int], None] | None = None,
+               concurrency: int | None = None,
                ) -> dict:
     if n_games <= 0:
         return {
@@ -447,6 +474,89 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     # Disable resignation during strength evaluation matches
     match_cfg.train.resign_threshold = -1.1
     match_cfg.train.resign_plies = 0
+    if concurrency is not None:
+        match_cfg.train.selfplay_concurrency = concurrency
+
+    gate_bar = tqdm(total=n_games, desc=f"gate ({n_games} games)", unit="game", leave=False)
+
+    if workers > 1:
+        ckpt_dir = match_cfg.train.checkpoint_dir or "."
+        os.makedirs(ckpt_dir, exist_ok=True)
+        weights_path_a = os.path.join(ckpt_dir, "_gate_net_a.pt")
+        weights_path_b = os.path.join(ckpt_dir, "_gate_net_b.pt")
+        net_a_module = getattr(net_a, "_orig_mod", net_a)
+        net_b_module = getattr(net_b, "_orig_mod", net_b)
+        torch.save({"model": net_a_module.state_dict()}, weights_path_a)
+        torch.save({"model": net_b_module.state_dict()}, weights_path_b)
+
+        def _gate_progress(completed: int) -> None:
+            _tqdm_sync_progress(gate_bar, completed)
+            if on_progress is not None:
+                on_progress(completed)
+
+        merged = play_match_parallel(
+            match_cfg,
+            _net_cfg_from_module(net_a),
+            _net_cfg_from_module(net_b),
+            weights_path_a,
+            weights_path_b,
+            n_games,
+            sims,
+            workers,
+            device,
+            exploration_moves,
+            syzygy_path=match_cfg.train.syzygy_path,
+            on_progress=_gate_progress,
+        )
+        _tqdm_sync_progress(gate_bar, n_games)
+        gate_bar.close()
+
+        wins_w = merged.wins_w
+        wins_b = merged.wins_b
+        losses_w = merged.losses_w
+        losses_b = merged.losses_b
+        draws_w = merged.draws_w
+        draws_b = merged.draws_b
+        game_lengths = merged.game_lengths
+        termination_counts = merged.termination_counts
+        score = merged.score
+        games_played = len(game_lengths)
+        winrate = score / games_played if games_played > 0 else float("nan")
+        total_wins = wins_w + wins_b
+        total_losses = losses_w + losses_b
+        total_draws = draws_w + draws_b
+        sprt_lower, sprt_upper = sprt_bounds(sprt_alpha, sprt_beta) if sprt else (float("nan"), float("nan"))
+        current_llr = (
+            sprt_llr(total_wins, total_draws, total_losses, elo0=sprt_elo0, elo1=sprt_elo1)
+            if sprt else float("nan")
+        )
+        current_sprt_decision = (
+            sprt_decision(current_llr, sprt_lower, sprt_upper) if sprt else "continue"
+        )
+        terminations_str = ";".join(f"{k}:{v}" for k, v in sorted(termination_counts.items()))
+        elo, elo_lower, elo_upper, los = sprt_elo(total_wins, total_draws, total_losses)
+        return {
+            "winrate": winrate,
+            "wins_as_white": wins_w,
+            "wins_as_black": wins_b,
+            "losses_as_white": losses_w,
+            "losses_as_black": losses_b,
+            "draws_as_white": draws_w,
+            "draws_as_black": draws_b,
+            "mean_game_len": float(np.mean(game_lengths)) if game_lengths else 0.0,
+            "terminations": terminations_str,
+            "llr": current_llr,
+            "sprt_decision": current_sprt_decision,
+            "sprt_lower": sprt_lower,
+            "sprt_upper": sprt_upper,
+            "elo": elo,
+            "elo_lower": elo_lower,
+            "elo_upper": elo_upper,
+            "los": los,
+            "games_played": games_played,
+            "elo0": sprt_elo0 if sprt else float("nan"),
+            "elo1": sprt_elo1 if sprt else float("nan"),
+        }
 
     eval_a = NetEvaluator(net_a, device=device)
     eval_b = NetEvaluator(net_b, device=device)
@@ -484,7 +594,6 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             else:
                 losses_b += 1
 
-    gate_bar = tqdm(total=n_games, desc=f"gate ({n_games} games)", unit="game", leave=False)
     concurrency = max(1, min(n_games, cfg.train.selfplay_concurrency))
     active: list[tuple[object, EvalRequest, bool]] = []
     launched = 0
@@ -960,6 +1069,10 @@ def main() -> None:
                 os.makedirs(cfg.train.checkpoint_dir or ".", exist_ok=True)
                 model_module = getattr(net, "_orig_mod", net)
                 torch.save({"model": model_module.state_dict()}, worker_weights_path)
+
+                def _parallel_selfplay_progress(completed: int) -> None:
+                    _tqdm_sync_progress(game_bar, completed)
+
                 parallel_samples, parallel_terms, parallel_lengths, parallel_outcomes = (
                     play_games_parallel(
                         cfg,
@@ -970,6 +1083,7 @@ def main() -> None:
                         workers=args.selfplay_workers,
                         device=args.device,
                         syzygy_path=cfg.train.syzygy_path,
+                        on_progress=_parallel_selfplay_progress,
                     )
                 )
                 buffer.extend(parallel_samples)
@@ -979,7 +1093,7 @@ def main() -> None:
                 termination_counts = Counter(parallel_terms)
                 game_lengths = parallel_lengths
                 game_outcomes = parallel_outcomes
-                game_bar.update(n_games)
+                _tqdm_sync_progress(game_bar, n_games)
             else:
                 play_games_batched(
                     evaluator,

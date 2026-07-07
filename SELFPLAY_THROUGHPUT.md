@@ -1,6 +1,6 @@
 # Self-play throughput notes
 
-Mental note for future recipe changes. Goal: **fastest games/hour on one GPU** without changing search quality (100 sims/move, same net, same MCTS).
+Mental note for future recipe changes. Goal: **fastest games/hour on one GPU** without changing search quality (current recipe: **200 sims/move**, same net, same MCTS).
 
 **Always:** `selfplay_workers: 1`, `concurrency = games`. Multi-worker self-play spawns separate CUDA contexts and is slower on a single GPU.
 
@@ -40,9 +40,9 @@ Measured from `results/metrics.csv` where noted. Same hardware class (Colab/Ligh
 | `concurrency` | **128** | Must match `games` for full batch width |
 | `selfplay_workers` | **1** | One GPU owner; compile + FP16 in main process |
 | `train_steps` | **800** | ~6× sample reuse at batch 128 |
-| `gate_games` | **128** | SPRT cap aligned with gate batch width |
+| `gate_games` | **256** | manual SPRT cap (200 sims, matches self-play) |
 
-Start iter **122** in `TRAINING_CHANGELOG.md`.
+See iter **161+** in `TRAINING_CHANGELOG.md` (200 sims experiment).
 
 ---
 

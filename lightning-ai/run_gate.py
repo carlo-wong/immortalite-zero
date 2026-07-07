@@ -11,15 +11,16 @@ from __future__ import annotations
 import os
 import sys
 
-# --- edit checkpoints and match settings here ---
+# --- edit checkpoints and match settings here (matches run_train.py gate_* defaults) ---
 # Use an int (iteration number) or the string "latest".
 CHECKPOINT_A: int | str = 20
 CHECKPOINT_B: int | str = 0
 
-GATE_GAMES = 128
-GATE_SIMS = 100
+GATE_GAMES = 256
+GATE_SIMS = 200
+GATE_WORKERS = 4
+GATE_CONCURRENCY = 256
 GATE_EXPLORATION_MOVES = 20
-CONCURRENCY = 128
 DRAW_PENALTY = 1 / 3
 
 
@@ -57,9 +58,9 @@ def main() -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     cfg = Config()
-    cfg.train.selfplay_concurrency = CONCURRENCY
     cfg.train.draw_penalty = DRAW_PENALTY
     cfg.train.syzygy_path = paths.tb_dir
+    cfg.train.checkpoint_dir = paths.ckpt_dir
     tablebase = chess.syzygy.open_tablebase(paths.tb_dir)
 
     path_a, label_a = _resolve_checkpoint(paths.ckpt_dir, CHECKPOINT_A)
@@ -89,7 +90,8 @@ def main() -> None:
     net_b, state_b = load_gate_net(path_b)
     print(
         f"\nMatch: {label_a} vs {label_b} "
-        f"(SPRT cap {GATE_GAMES} games, {GATE_SIMS} sims, elo0={ELO0}, elo1={ELO1})..."
+        f"(SPRT cap {GATE_GAMES} games, {GATE_SIMS} sims, workers={GATE_WORKERS}, "
+        f"elo0={ELO0}, elo1={ELO1})..."
     )
 
     metrics = play_match(
@@ -104,6 +106,8 @@ def main() -> None:
         sprt_elo1=ELO1,
         sprt_alpha=ALPHA,
         sprt_beta=BETA,
+        workers=GATE_WORKERS,
+        concurrency=GATE_CONCURRENCY,
     )
     tablebase.close()
 
