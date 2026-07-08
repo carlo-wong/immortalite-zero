@@ -114,6 +114,7 @@ def main() -> None:
         "--syzygy-path", paths.tb_dir,
         "--save-every", str(TRAIN["save_every"]),
         "--gate-every", "0",
+        "--quick-eval-games", "0",
         "--lr", str(TRAIN["lr"]),
         "--lr-min", str(TRAIN["lr_min"]),
         "--lr-total-iters", str(TRAIN["lr_total_iters"]),

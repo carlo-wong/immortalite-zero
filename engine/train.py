@@ -861,7 +861,7 @@ def main() -> None:
                         help="also gate vs this frozen checkpoint iter (0 = off)")
     parser.add_argument("--gate-anchor-games", type=int, default=30,
                         help="games for anchor checkpoint gate")
-    parser.add_argument("--quick-eval-games", type=int, default=16,
+    parser.add_argument("--quick-eval-games", type=int, default=0,
                         help="lightweight eval games each iter vs iter-lag snapshot (0 = off)")
     parser.add_argument("--quick-eval-lag", type=int, default=10,
                         help="compare current net to checkpoint at iter minus this lag")
