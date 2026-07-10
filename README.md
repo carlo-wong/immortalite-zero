@@ -85,22 +85,22 @@ These override the `--gpu` preset when passed on the CLI. Resume always keeps th
 |---------|-------|-----------|
 | Games / iter | 128 | 128 |
 | Train steps / iter | 800 | 800 |
-| MCTS sims / move | 200 | 200 |
+| MCTS sims / move | 100 | 100 |
 | Concurrency | 128 | 128 |
-| Self-play workers | 1 | 1 |
+| Self-play workers | 2 | 2 |
 | Replay buffer / window | 200k | 200k |
 | Draw penalty | 1/3 | 1/3 |
 | Resign | off | off |
 | LR | 2.5e-4 constant | 2.5e-4 constant |
 | Training span | stop at iters 160, 180, … | stop at iters 160, 180, … |
 | In-loop gate | off | off |
-| Manual gate (SPRT cap) | 256 games | 256 games |
-| Manual gate sims | 200 | 200 |
+| Manual gate (SPRT cap) | 128 games | 128 games |
+| Manual gate sims | 100 | 100 |
 | Save snapshot | every 10 iters | every 10 iters |
 
 **LR schedule:** cosine warmup/decay is built into `engine/train.py`, but both runners set `lr == lr_min` so the effective rate stays flat. When strength plateaus, manually drop both (e.g. to `6e-5`) and resume from `latest.pt`.
 
-**Gates:** no in-loop auto-gate. Run the manual gate cell or `lightning-ai/run_gate.py` when you want SPRT (256-game cap, 200 sims). Logged to `metrics_gates.csv`: the SPRT (`llr`, `decision`, `verdict`) plus a logistic `elo` estimate with a 95% confidence interval (`elo_lower`/`elo_upper`) and `los`. Rotate or delete an old `metrics_gates.csv` if the header schema changed.
+**Gates:** no in-loop auto-gate. Run the manual gate cell or `lightning-ai/run_gate.py` when you want SPRT (128-game cap, 100 sims). Logged to `metrics_gates.csv`: the SPRT (`llr`, `decision`, `verdict`) plus a logistic `elo` estimate with a 95% confidence interval (`elo_lower`/`elo_upper`) and `los`. Rotate or delete an old `metrics_gates.csv` if the header schema changed.
 
 ### Local smoke test
 

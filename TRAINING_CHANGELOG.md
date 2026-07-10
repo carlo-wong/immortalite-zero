@@ -16,9 +16,10 @@ Gates run every 20 iters vs the checkpoint **20 iters ago**. Edit only the `TRAI
 | **120** | 256 | 1600 | 256 | 1 | 200k | 512 SPRT | 2.5e-4 flat | scale-up trial; reverted at 122 |
 | **122** | **128** | **800** | **128** | **1** | 200k | **128 SPRT** | 2.5e-4 flat | faster s/game; gate cap matches batch |
 | **161**‡ | **128** | **800** | **128** | **1** | **120k** | **128 SPRT** | **5e-4→2e-4** (161–196) | Phase 2A — **reverted** (regressed ~69 Elo vs 160); shards/checkpoints 161–180 removed |
-| **161** | **128** | **800** | **128** | **1** | **200k** | **256 SPRT** | **2.5e-4 flat** | rewind to `ckpt_iter_0160`; **200 sims** only; resign off |
+| **161**§ | **128** | **800** | **128** | **1** | **200k** | **256 SPRT** | **2.5e-4 flat** | rewind to `ckpt_iter_0160`; 200 sims only; resign off — **reverted** (one-hot policy targets from c_scale=1.0 bug + worst-child root-Q bug; iters 161–180 discarded) |
+| **161** | **128** | **800** | **128** | **2** | **200k** | **128 SPRT** | **2.5e-4 flat** | **100 sims**; resign off; claim_draw off in search; Gumbel c_scale 0.1 + root-Q fixes; encoding vectorized |
 
-**Current row:** start **161** (from iter **160** checkpoint) — 200 sims self-play + gate, 256-game SPRT cap, 200k replay, 2.5e-4 flat LR. Resume from `latest.pt` (= `ckpt_iter_0160.pt`). Do **not** use `--reset-optimizer`.
+**Current row:** start **161** (from iter **160** checkpoint) — 100 sims self-play + gate, resign off, 128-game SPRT cap, 200k replay, 2.5e-4 flat LR. Resume from `latest.pt` (= `ckpt_iter_0160.pt`). Do **not** use `--reset-optimizer`.
 
 Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net only with a new `--checkpoint-dir`.
 
@@ -83,11 +84,20 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 
 - Bundled LR warm restart, optimizer reset, and 120k replay — gate 180 vs 160 **−69 Elo**; training metrics improved but strength collapsed (entropy collapse). Run discarded; resume from **`ckpt_iter_0160`**.
 
-### Iter 161 — sims 200 experiment (current)
+### Iter 161 — sims 200 experiment (reverted)
 
 - Rewind to **`ckpt_iter_0160`**; delete shards/checkpoints/metrics for iters 161–180.
 - **Only change vs 141–160 recipe:** self-play and gate **200 MCTS sims** (was 100).
 - **256-game SPRT cap** (was 128) for tighter gate estimates.
 - **200k replay**, **2.5e-4 flat LR**, resign off, optimizer state preserved.
 
-Last updated: 2026-07-04.
+### Iter 161 — bug-fix restart (current)
+
+- **Sims-200 run discarded:** two bugs introduced by the Jul 6 fix commit corrupted training targets. (1) Gumbel improved-policy collapsed to one-hot because `gumbel_c_scale` was set to 1.0 instead of 0.1 (argmax sigma dominates). (2) `searched_root_q` returned the worst child's value instead of the visit-weighted mean, corrupting truncation value labels. Both bugs are now fixed with regression tests.
+- **Rewind to `ckpt_iter_0160`.** CSV records and sample shards for iters 161–180 deleted.
+- **Recipe reverted to 100 sims** (200 sims cost 2× time for ~35% sharper targets — not worth it without sequential halving).
+- **Resignation off** (gates always disable resignation at engine level).
+- **Speed optimizations:** `claim_draw=False` inside MCTS search (~5–10% speedup); vectorized encoding (~10–15% speedup); buffer sampling snapshot; evaluator hoist.
+- **`selfplay_workers` 1 → 2**: T4 benchmark (`benchmark_throughput.csv`) showed workers=2, 64 concurrency/worker ~15–18% faster than workers=1 at 200 sims; applies equally at 100 sims.
+
+Last updated: 2026-07-10.

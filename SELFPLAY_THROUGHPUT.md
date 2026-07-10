@@ -1,8 +1,10 @@
 # Self-play throughput notes
 
-Mental note for future recipe changes. Goal: **fastest games/hour on one GPU** without changing search quality (current recipe: **200 sims/move**, same net, same MCTS).
+Mental note for future recipe changes. Goal: **fastest games/hour on one GPU** without changing search quality (current recipe: **100 sims/move**, same net, same MCTS).
 
-**Always:** `selfplay_workers: 1`, `concurrency = games`. Multi-worker self-play spawns separate CUDA contexts and is slower on a single GPU.
+**Update (2026-07-10):** The T4 benchmark (`benchmark_throughput.csv`, 200 sims, net 8×96) shows `workers=2` with 64 concurrency/worker is **~15–18% faster** than `workers=1` at 128 games (23.9 vs 28.5 s/game). The `workers=1` advice below is superseded for the current net size. **Recommended: `selfplay_workers=2`, `concurrency=128` (64/worker).**
+
+**Previously:** `selfplay_workers: 1`, `concurrency = games`. Multi-worker self-play spawns separate CUDA contexts and is slower on a single GPU — this was true at smaller net sizes / earlier engine code but no longer holds at 8×96 with the vectorized encoder.
 
 ---
 
@@ -38,11 +40,11 @@ Measured from `results/metrics.csv` where noted. Same hardware class (Colab/Ligh
 |-----------|-------|-----|
 | `games` | **128** | Best measured s/game on single GPU |
 | `concurrency` | **128** | Must match `games` for full batch width |
-| `selfplay_workers` | **1** | One GPU owner; compile + FP16 in main process |
+| `selfplay_workers` | **2** | T4 benchmark: 2 workers × 64 concurrency/worker ~15–18% faster than 1×128 |
 | `train_steps` | **800** | ~6× sample reuse at batch 128 |
-| `gate_games` | **256** | manual SPRT cap (200 sims, matches self-play) |
+| `gate_games` | **128** | manual SPRT cap (100 sims, matches self-play) |
 
-See iter **161+** in `TRAINING_CHANGELOG.md` (200 sims experiment).
+See iter **161+** in `TRAINING_CHANGELOG.md` (bug-fix restart, 100 sims).
 
 ---
 
@@ -58,10 +60,10 @@ See iter **161+** in `TRAINING_CHANGELOG.md` (200 sims experiment).
 
 ## Not worth revisiting (unless hardware changes)
 
-- `selfplay_workers > 1` on one GPU
+- `selfplay_workers > 2` on one GPU (workers=2 is now the benchmarked optimum; workers=4 untested)
 - `games: 256` on T4-class GPU with current engine (tested iter 121)
 - `gate_games: 512` when self-play is 128 — gates take too long for marginal SPRT precision
 
 ---
 
-Last updated: 2026-06-28 (from metrics iters 0–120 + iter 121 log).
+Last updated: 2026-07-10 (workers=2 recommendation from `benchmark_throughput.csv`; prior data from iters 0–120 + iter 121 log).

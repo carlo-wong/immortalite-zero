@@ -28,18 +28,18 @@ from paths import ensure_ckpt_dir, resolve_paths, validate_syzygy
 STOP_INTERVAL = 20  # stop after completing iters 160, 180, 200, …
 
 TRAIN = {
-    "sims": 200,
-    "gate_sims": 200,  # manual gate (run_gate.py / notebook gate cell) only
+    "sims": 100,
+    "gate_sims": 100,  # manual gate (run_gate.py / notebook gate cell) only
     "games": 128,
     "train_steps": 800,
     "concurrency": 128,
-    "selfplay_workers": 4,
+    "selfplay_workers": 2,
     "replay_buffer": 200_000,
     "replay_window": 200_000,
     "draw_penalty": 1 / 3,
-    "gate_games": 256,
+    "gate_games": 128,
     "gate_workers": 4,
-    "gate_concurrency": 256,
+    "gate_concurrency": 128,
     "gate_exploration_moves": 20,
     "save_every": 10,
     "resume": True,

@@ -40,8 +40,8 @@ def _sign(x: int) -> int:
     return (x > 0) - (x < 0)
 
 
-def _write_board_planes(board: chess.Board, planes: np.ndarray) -> None:
-    """Write canonical side-to-move planes into ``planes`` (20, 8, 8)."""
+def _write_board_planes_ref(board: chess.Board, planes: np.ndarray) -> None:
+    """Reference implementation (piece_map loop). Kept for equivalence tests."""
     planes.fill(0.0)
     if board.turn == chess.WHITE:
         for square, piece in board.piece_map().items():
@@ -87,6 +87,78 @@ def _write_board_planes(board: chess.Board, planes: np.ndarray) -> None:
         planes[18, :, :] = 1.0
     halfmove_norm = min(float(board.halfmove_clock) / 100.0, 1.0)
     planes[19, :, :] = halfmove_norm
+
+
+def _write_board_planes(board: chess.Board, planes: np.ndarray) -> None:
+    """Write canonical side-to-move planes into ``planes`` (20, 8, 8).
+
+    Uses bitboard operations to avoid a Python loop over piece_map().
+    Layout: unpackbits(bb.to_bytes(8,'little'), bitorder='little').reshape(8,8)
+    gives planes[rank, file] = 1 for each occupied square (rank*8+file = square
+    index).  For black-to-move canonical frame, square_mirror is a vertical rank
+    flip: arr[::-1, :].
+    """
+    planes.fill(0.0)
+
+    piece_bbs = (
+        board.pawns,
+        board.knights,
+        board.bishops,
+        board.rooks,
+        board.queens,
+        board.kings,
+    )
+    occ_us = board.occupied_co[board.turn]
+    occ_them = board.occupied_co[not board.turn]
+
+    # Pack 12 bitboards into a uint64 array; view as uint8 bytes (little-endian
+    # on x86) then unpack all piece planes in one np.unpackbits call.
+    # Assigning uint8 piece_planes to float32 planes[] is cast in C by numpy.
+    bbs = np.empty(12, dtype=np.uint64)
+    for i, bb in enumerate(piece_bbs):
+        bbs[i] = bb & occ_us
+        bbs[i + 6] = bb & occ_them
+
+    piece_planes = (
+        np.unpackbits(bbs.view(np.uint8).reshape(12, 8), axis=1, bitorder="little")
+        .reshape(12, 8, 8)
+    )
+
+    if board.turn == chess.WHITE:
+        planes[:12] = piece_planes
+        if board.has_kingside_castling_rights(chess.WHITE):
+            planes[12] = 1.0
+        if board.has_queenside_castling_rights(chess.WHITE):
+            planes[13] = 1.0
+        if board.has_kingside_castling_rights(chess.BLACK):
+            planes[14] = 1.0
+        if board.has_queenside_castling_rights(chess.BLACK):
+            planes[15] = 1.0
+        ep_square = board.ep_square
+        if ep_square is not None:
+            planes[16, chess.square_rank(ep_square), chess.square_file(ep_square)] = 1.0
+    else:
+        # square_mirror flips ranks: apply vertical flip to all 12 piece planes.
+        planes[:12] = piece_planes[:, ::-1, :]
+        if board.has_kingside_castling_rights(chess.BLACK):
+            planes[12] = 1.0
+        if board.has_queenside_castling_rights(chess.BLACK):
+            planes[13] = 1.0
+        if board.has_kingside_castling_rights(chess.WHITE):
+            planes[14] = 1.0
+        if board.has_queenside_castling_rights(chess.WHITE):
+            planes[15] = 1.0
+        ep_square = board.ep_square
+        if ep_square is not None:
+            ep_m = chess.square_mirror(ep_square)
+            planes[16, chess.square_rank(ep_m), chess.square_file(ep_m)] = 1.0
+
+    if board.is_repetition(2):
+        planes[17] = 1.0
+    if board.is_repetition(3):
+        planes[18] = 1.0
+    halfmove_norm = min(float(board.halfmove_clock) / 100.0, 1.0)
+    planes[19] = halfmove_norm
 
 
 def board_to_planes(board: chess.Board) -> np.ndarray:

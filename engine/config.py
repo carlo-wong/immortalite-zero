@@ -20,8 +20,9 @@ class MCTSConfig:
     dirichlet_alpha: float = 0.3    # root exploration noise (self-play only)
     dirichlet_epsilon: float = 0.25
     # Gumbel completed-Q policy-target scaling.
+    # gumbel_c_scale matches mctx value_scale=0.1: sigma = 0.1 * (c_visit + max_N).
     gumbel_c_visit: float = 50.0
-    gumbel_c_scale: float = 1.0
+    gumbel_c_scale: float = 0.1
     # Search contempt during self-play/analysis: draw terminals penalized in search.
     # Gates override this to 0 for normal W/D/L strength metrics.
     draw_contempt: float = 1 / 3

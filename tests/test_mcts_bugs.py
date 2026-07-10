@@ -85,3 +85,97 @@ def test_improved_policy_normalizes_q_values() -> None:
 
     assert not np.allclose(base.q_values, scaled.q_values)
     assert np.allclose(base.improved_policy(), scaled.improved_policy())
+
+
+def test_searched_root_q_is_visit_weighted_mean() -> None:
+    """searched_root_q must return visit-weighted mean, not the minimum."""
+    board = chess.Board()
+    root = _Node(0.0)
+    root.N = 100
+
+    visits = np.array([90.0, 8.0, 2.0])
+    q_values = np.array([0.3, -0.5, -0.9])
+    expected = float(np.dot(visits, q_values) / visits.sum())  # 0.212
+
+    result = SearchResult(
+        moves=[],
+        indices=[10, 20, 30],
+        visits=visits,
+        q_values=q_values,
+        priors=np.array([0.9, 0.08, 0.02]),
+        clean_priors=np.array([0.9, 0.08, 0.02]),
+        root_value=0.0,
+        _root=root,
+        _board=board,
+        _cfg=Config().mcts,
+    )
+
+    assert abs(result.searched_root_q - expected) < 1e-9, (
+        f"expected visit-weighted mean {expected:.4f}, got {result.searched_root_q:.4f}"
+    )
+    # Old code returned np.min(q_values) = -0.9; assert that is wrong.
+    assert abs(result.searched_root_q - float(np.min(q_values))) > 0.1, (
+        "searched_root_q should NOT equal the minimum q_value"
+    )
+
+
+def test_improved_policy_entropy_and_prior_ordering() -> None:
+    """improved_policy must retain meaningful entropy (requires c_scale=0.1 fix)."""
+    board = chess.Board()
+    root = _Node(0.0)
+    n_moves = 20
+    cfg = Config()
+    # Confirm the config default was fixed; with c_scale=1.0 entropy collapses to ~0.
+    assert cfg.mcts.gumbel_c_scale == 0.1, (
+        f"gumbel_c_scale must be 0.1 after fix, got {cfg.mcts.gumbel_c_scale}"
+    )
+
+    # Uniform priors, linearly spread q values (span 0.3), visits up to 50.
+    visits = np.linspace(1.0, 50.0, n_moves)
+    q_values = np.linspace(-0.15, 0.15, n_moves)
+    clean_priors = np.full(n_moves, 1.0 / n_moves)
+
+    result = SearchResult(
+        moves=[],
+        indices=list(range(n_moves)),
+        visits=visits,
+        q_values=q_values,
+        priors=clean_priors.copy(),
+        clean_priors=clean_priors.copy(),
+        root_value=0.0,
+        _root=root,
+        _board=board,
+        _cfg=cfg.mcts,
+    )
+
+    policy = result.improved_policy()
+    entropy = float(-np.sum(policy * np.log(np.clip(policy, 1e-12, None))))
+    assert entropy > 0.5, (
+        f"policy entropy {entropy:.4f} nats is too low; policy collapsed to near one-hot. "
+        "This fails with c_scale=1.0 where sigma~100 swamps prior logits."
+    )
+    assert float(policy.max()) < 0.9, (
+        f"max policy prob {policy.max():.4f} too high; policy collapsed. "
+        "This fails with c_scale=1.0 where best-Q move absorbs all probability."
+    )
+
+    # With equal q_values, improved_policy ranking must follow priors.
+    skewed_priors = np.exp(np.linspace(-1.0, 1.0, n_moves))
+    skewed_priors /= skewed_priors.sum()
+    equal_q = np.zeros(n_moves)
+    result_eq = SearchResult(
+        moves=[],
+        indices=list(range(n_moves)),
+        visits=visits,
+        q_values=equal_q,
+        priors=skewed_priors.copy(),
+        clean_priors=skewed_priors.copy(),
+        root_value=0.0,
+        _root=root,
+        _board=board,
+        _cfg=cfg.mcts,
+    )
+    policy_eq = result_eq.improved_policy()
+    assert int(np.argmax(policy_eq)) == int(np.argmax(skewed_priors)), (
+        "With equal q_values, improved_policy argmax must match prior argmax"
+    )

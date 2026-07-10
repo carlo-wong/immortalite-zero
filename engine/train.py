@@ -470,6 +470,9 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     match_cfg.beauty.enabled = False
     # Strength gates use normal chess: draws score 0.5, search treats draws as 0.
     match_cfg.mcts.draw_contempt = 0.0
+    # Pin explicitly so in-loop gates (training cfg has claim_draw=False for
+    # speed) and manual gates (fresh Config) measure with identical search.
+    match_cfg.mcts.claim_draw = True
     # No artificial ply cap — Syzygy, 50-move, threefold, etc. end games naturally.
     match_cfg.train.max_game_moves = 10_000
     # Disable resignation during strength evaluation matches
@@ -946,6 +949,8 @@ def main() -> None:
     args.gate_exploration_moves = max(0, int(args.gate_exploration_moves))
     # Keep self-play search contempt aligned with the draw target shaping.
     cfg.mcts.draw_contempt = cfg.train.draw_penalty
+    # Outer game loop claims draws; skip expensive per-node repetition checks in search.
+    cfg.mcts.claim_draw = False
     print(
         "config: "
         f"games={cfg.train.games_per_iteration} "
@@ -1032,6 +1037,11 @@ def main() -> None:
         if os.path.isfile(stale_worker_weights):
             os.remove(stale_worker_weights)
 
+    # Hoist: NetEvaluator holds a live reference to net (no weight snapshot), so
+    # in-place updates from training are always visible; construct once to avoid
+    # pinned-memory re-allocation on every iteration.
+    evaluator = NetEvaluator(net, device=args.device)
+
     try:
         for local_it in range(args.iterations):
             it = start_iter + local_it
@@ -1039,7 +1049,6 @@ def main() -> None:
             for param_group in optimizer.param_groups:
                 param_group["lr"] = current_lr
             sims = cfg.train.sims_per_move
-            evaluator = NetEvaluator(net, device=args.device)
 
             t0 = time.time()
             new_samples = 0
@@ -1118,10 +1127,12 @@ def main() -> None:
             step_rows: list[tuple[int, dict[str, float]]] = []
             t_train = time.time()
             if len(buffer) >= cfg.train.batch_size:
+                # Snapshot buffer once; random.sample on a deque is O(N) per call.
+                sample_pool = list(buffer)
                 train_bar = tqdm(range(cfg.train.train_steps_per_iteration),
                                  desc=f"iter {it} train", unit="step", leave=False)
                 for step in train_bar:
-                    batch = random.sample(buffer, cfg.train.batch_size)
+                    batch = random.sample(sample_pool, cfg.train.batch_size)
                     step_result = train_step(net, optimizer, batch, args.device, scaler=scaler,
                                              grad_clip=cfg.train.grad_clip_norm)
                     for name, value in step_result.items():

@@ -212,8 +212,13 @@ def test_resign_streak_counts_per_player_plies() -> None:
     cfg.train.max_game_moves = 40
     cfg.mcts.simulations = 2
 
+    # BLACK: 0.95 means Black is winning (0.95) from Black's perspective, so the
+    # backed-up q for White's explored children is -0.95, below the resign threshold.
+    # Previously BLACK: 0.5 only worked because np.min() pulled in unvisited children
+    # whose fallback q=root_value=-0.95; the corrected visit-weighted mean requires the
+    # visited children themselves to have q < -0.9.
     evaluator = FakeEvaluator(
-        value_for_turn={chess.WHITE: -0.95, chess.BLACK: 0.5},
+        value_for_turn={chess.WHITE: -0.95, chess.BLACK: 0.95},
     )
     game = play_game(evaluator, cfg, simulations=2)
 

@@ -61,17 +61,18 @@ Writes `latest.pt`, `metrics.csv`, shards every iteration to `../results/`.
 
 ### Current `TRAIN` defaults
 
-Same as Colab cell 6 and `run_train.py`: Phase **2A** from iter **161**. See `colab/README.md` and `TRAINING_CHANGELOG.md`.
+Same as Colab cell 6 and `run_train.py`: bug-fix restart at iter **161** from `ckpt_iter_0160`. See `colab/README.md` and `TRAINING_CHANGELOG.md`.
 
 | Key | Value |
 |-----|-------|
-| `sims` | 200 |
+| `sims` | 100 |
 | `games` | 128 |
 | `train_steps` | 800 |
 | `concurrency` | 128 |
-| `selfplay_workers` / `gate_workers` | 4 / 4 |
+| `selfplay_workers` / `gate_workers` | 2 / 4 |
+| `resign` | off |
 | `replay_buffer` / `replay_window` | 200k |
-| `gate_games` / `gate_sims` | 256 / 200 (manual gate only) |
+| `gate_games` / `gate_sims` | 128 / 100 (manual gate only) |
 | `lr` / `lr_min` | 2.5e-4 flat |
 | Training span | auto-stops at iters 160, 180, … (multiples of 20) |
 | `RESET_OPTIMIZER` | `False` |
@@ -131,7 +132,7 @@ Open **http://localhost:8000/app/**
 | No CUDA | Select GPU machine, re-run |
 | Syzygy incomplete | All 145 `.rtbw` in `syzygy345/` sibling folder |
 | `results/` not found | Sibling of repo, not inside it |
-| Slow self-play | Keep `concurrency` = `games`; tune `selfplay_workers` (4 on Lightning) |
+| Slow self-play | Keep `concurrency` = `games`; `selfplay_workers=2` (64 concurrency/worker) benchmarked fastest on T4-class GPUs |
 | OOM | Lower `games` and `concurrency` together |
 
 Recipe history: **[TRAINING_CHANGELOG.md](../TRAINING_CHANGELOG.md)**

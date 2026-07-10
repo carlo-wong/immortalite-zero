@@ -71,8 +71,9 @@ class SearchResult:
 
     @property
     def searched_root_q(self) -> float:
-        if self.q_values.size:
-            return float(np.min(self.q_values))
+        total = float(self.visits.sum())
+        if total > 0:
+            return float(np.dot(self.visits, self.q_values) / total)
         if self._root.N > 0:
             return float(self._root.Q)
         return float(self.root_value)

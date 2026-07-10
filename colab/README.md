@@ -34,25 +34,25 @@ Or: [colab.research.google.com](https://colab.research.google.com) → **File �
 | 4 | Confirm GPU, set `--gpu` preset |
 | 5 | Syzygy tablebases (Drive cache or download) |
 | 6 | **Train** — edit `TRAIN` dict only; auto-stops at iters 160, 180, … |
-| 7 | Optional **manual gate** (SPRT, 256 games / 200 sims) |
+| 7 | Optional **manual gate** (SPRT, 128 games / 100 sims) |
 | 8 | Plot `metrics.csv` + gate results |
 
 ## Step 4 — Current `TRAIN` defaults (cell 6)
 
-Phase **161+** from iter **160** checkpoint — same as `lightning-ai/run_train.py`. See `TRAINING_CHANGELOG.md`.
+Bug-fix restart at iter **161** from `ckpt_iter_0160` — same as `lightning-ai/run_train.py`. See `TRAINING_CHANGELOG.md`.
 
 | Key | Value | Notes |
 |-----|-------|-------|
-| `sims` | **200** | flat MCTS sims/move |
+| `sims` | **100** | flat MCTS sims/move |
 | `games` | 128 | full GPU batch width (`concurrency` matches) |
 | `train_steps` | 800 | ~6× sample reuse at 128 games |
 | `concurrency` | 128 | batched MCTS eval width (one GPU owner) |
 | `selfplay_workers` / `gate_workers` | **2** / **2** | matches Colab 2 vCPU; separate CUDA process per worker |
 | `replay_buffer` / `replay_window` | **200k** | ~12 iters at 128 games |
 | `draw_penalty` | 1/3 | football 3-1-0 shaping |
-| `resign` | False | no self-play resignation |
+| `resign` | False | off |
 | `lr` / `lr_min` | **2.5e-4** | flat |
-| `gate_games` / `gate_sims` | **256 / 200** | manual gate cell 7 only |
+| `gate_games` / `gate_sims` | **128 / 100** | manual gate cell 7 only |
 | `gate_exploration_moves` | 20 | sample first 20 plies in gates |
 | `save_every` | 10 | numbered snapshots |
 | `resume` | True | loads `latest.pt` automatically |
@@ -62,7 +62,7 @@ Training auto-stops after completing an iter that is a multiple of **20** (160, 
 ## Step 5 — What good looks like
 
 ```
-iter  40 | sims 200 | games 128 | samples 18500 | buffer 200000 | policy_loss 2.1 | value_loss 0.4 | lr 2.500e-04 | 420.0s
+iter  40 | sims 100 | games 128 | samples 18500 | buffer 200000 | policy_loss 2.1 | value_loss 0.4 | lr 2.500e-04 | 420.0s
 ```
 
 - **policy_loss** should trend down over many iterations (not every single iter).
