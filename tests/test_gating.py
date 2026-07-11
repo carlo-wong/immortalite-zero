@@ -79,20 +79,16 @@ def test_log_gate_metrics_writes_correct_csv() -> None:
         prev_it = 5
         games = 20
         metrics = {
-            "winrate": 0.65,
-            "wins_as_white": 6,
-            "wins_as_black": 5,
-            "losses_as_white": 3,
-            "losses_as_black": 2,
-            "draws_as_white": 2,
-            "draws_as_black": 2,
+            "winrate": 0.85,
+            "wins_as_white": 9,
+            "wins_as_black": 8,
+            "losses_as_white": 1,
+            "losses_as_black": 0,
+            "draws_as_white": 1,
+            "draws_as_black": 1,
             "mean_game_len": 120.5,
             "terminations": "checkmate:16;threefold_repetition:4",
-            "llr": 2.5,
-            "sprt_decision": "accept",
             "games_played": 20,
-            "elo0": 0.0,
-            "elo1": 25.0,
         }
 
         _log_gate_metrics(tmpdir, it, prev_it, metrics, games)
@@ -107,7 +103,7 @@ def test_log_gate_metrics_writes_correct_csv() -> None:
             "wins_as_white", "wins_as_black", "losses_as_white", "losses_as_black",
             "draws_as_white", "draws_as_black",
             "winrate", "wins", "draws", "losses", "mean_game_len", "terminations",
-            "elo", "elo_lower", "elo_upper", "los", "llr", "decision", "verdict",
+            "elo", "elo_lower", "elo_upper", "los", "verdict",
         ]
         assert list(df.columns) == expected_cols
 
@@ -124,6 +120,8 @@ def test_log_gate_metrics_writes_correct_csv() -> None:
         assert float(row["mean_game_len"]) == pytest.approx(metrics["mean_game_len"])
         assert int(row["games"]) == games
         assert row["terminations"] == metrics["terminations"]
+        # 17 wins / 2 draws / 1 loss → Elo CI above 0 → PASS
+        assert row["verdict"] == "PASS"
 
 
 def test_log_metrics_winrate_vs_prev_nan_by_default() -> None:
@@ -159,11 +157,7 @@ def test_log_metrics_winrate_vs_prev_after_gate() -> None:
             "draws_as_black": 1,
             "mean_game_len": 90.0,
             "terminations": "checkmate:8;stalemate:2",
-            "llr": 0.5,
-            "sprt_decision": "continue",
             "games_played": 10,
-            "elo0": 0.0,
-            "elo1": 25.0,
         }
         it = 10
         _log_metrics(

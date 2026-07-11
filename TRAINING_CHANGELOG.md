@@ -17,9 +17,10 @@ Gates run every 20 iters vs the checkpoint **20 iters ago**. Edit only the `TRAI
 | **122** | **128** | **800** | **128** | **1** | 200k | **128 SPRT** | 2.5e-4 flat | faster s/game; gate cap matches batch |
 | **161**‡ | **128** | **800** | **128** | **1** | **120k** | **128 SPRT** | **5e-4→2e-4** (161–196) | Phase 2A — **reverted** (regressed ~69 Elo vs 160); shards/checkpoints 161–180 removed |
 | **161**§ | **128** | **800** | **128** | **1** | **200k** | **256 SPRT** | **2.5e-4 flat** | rewind to `ckpt_iter_0160`; 200 sims only; resign off — **reverted** (one-hot policy targets from c_scale=1.0 bug + worst-child root-Q bug; iters 161–180 discarded) |
-| **161** | **128** | **800** | **128** | **2** | **200k** | **128 SPRT** | **2.5e-4 flat** | **100 sims**; resign off; claim_draw off in search; Gumbel c_scale 0.1 + root-Q fixes; encoding vectorized |
+| **161**¶ | **128** | **800** | **128** | **2** | **200k** | **128 games** | **2.5e-4 flat** | claim_draw off in search — **reverted** (17× repetition draws corrupted value targets; gate 180 vs 160 −112 Elo FAIL; iters 161–180 discarded) |
+| **161** | **128** | **800** | **128** | **2** | **200k** | **128 games** (Elo CI) | **2.5e-4 flat** | **100 sims**; resign off; **claim_draw on** in search; **value_target=root_q** (per-ply MCTS Q); Gumbel c_scale 0.1 + root-Q fixes; encoding vectorized |
 
-**Current row:** start **161** (from iter **160** checkpoint) — 100 sims self-play + gate, resign off, 128-game SPRT cap, 200k replay, 2.5e-4 flat LR. Resume from `latest.pt` (= `ckpt_iter_0160.pt`). Do **not** use `--reset-optimizer`.
+**Current row:** start **161** (from iter **160** checkpoint) — 100 sims self-play + gate, resign off, claim_draw on in search, **value_target=root_q**, 128-game Elo-CI gate, 200k replay, 2.5e-4 flat LR. Resume from `latest.pt` (= `ckpt_iter_0160.pt`). Do **not** use `--reset-optimizer`.
 
 Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net only with a new `--checkpoint-dir`.
 
@@ -74,11 +75,10 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 - **256 games / 1600 train steps** — trial; ~17% slower per game vs 128 on T4 (see iter 121 metrics).
 - **`selfplay_workers: 1`**, **`concurrency: 256`**, SPRT cap 512.
 
-### Iter 122 — back to 128 + smaller SPRT cap (current)
+### Iter 122 — back to 128 + smaller SPRT cap
 
 - **128 games / 800 train steps**, **concurrency 128**, **`selfplay_workers: 1`** — best measured s/game on single GPU.
-- **SPRT gate cap 128** (was 512); still early-stops when H₀/H₁ decided.
-- LR 2.5e-4 flat; replay 200k (~12 iters at 128 games); draw 1/3; resign off; gate sims 100.
+- Gate cap **128**; LR 2.5e-4 flat; replay 200k (~12 iters at 128 games); draw 1/3; resign off; gate sims 100.
 
 ### Iter 161 — Phase 2A (reverted)
 
@@ -91,13 +91,24 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 - **256-game SPRT cap** (was 128) for tighter gate estimates.
 - **200k replay**, **2.5e-4 flat LR**, resign off, optimizer state preserved.
 
-### Iter 161 — bug-fix restart (current)
+### Iter 161 — bug-fix restart with claim_draw=False (reverted)
 
 - **Sims-200 run discarded:** two bugs introduced by the Jul 6 fix commit corrupted training targets. (1) Gumbel improved-policy collapsed to one-hot because `gumbel_c_scale` was set to 1.0 instead of 0.1 (argmax sigma dominates). (2) `searched_root_q` returned the worst child's value instead of the visit-weighted mean, corrupting truncation value labels. Both bugs are now fixed with regression tests.
-- **Rewind to `ckpt_iter_0160`.** CSV records and sample shards for iters 161–180 deleted.
-- **Recipe reverted to 100 sims** (200 sims cost 2× time for ~35% sharper targets — not worth it without sequential halving).
-- **Resignation off** (gates always disable resignation at engine level).
-- **Speed optimizations:** `claim_draw=False` inside MCTS search (~5–10% speedup); vectorized encoding (~10–15% speedup); buffer sampling snapshot; evaluator hoist.
-- **`selfplay_workers` 1 → 2**: T4 benchmark (`benchmark_throughput.csv`) showed workers=2, 64 concurrency/worker ~15–18% faster than workers=1 at 200 sims; applies equally at 100 sims.
+- Rewound to **`ckpt_iter_0160`** with **100 sims**, workers **2**, vectorized encoding, Gumbel c_scale 0.1 + root-Q fixes.
+- **`claim_draw=False` in MCTS search** (intended as a speedup) made search blind to threefold/fifty-move draws while the game loop still adjudicated them → 17× more repetition draws, corrupted value targets (−1/3 on winning positions), value_std collapse, gate 180 vs 160 **−112 Elo FAIL**.
+- **Third discard of iters 161–180.** Resume from **`ckpt_iter_0160`**.
 
-Last updated: 2026-07-10.
+### Iter 161 — claim_draw restored (superseded by root_q labels)
+
+- Same recipe as the bug-fix restart **except** search keeps **`claim_draw=True`** (Config default; no train.py override).
+- Gate logging uses **Elo 95% CI verdict** (PASS if lower bound > 0, FAIL if upper bound < 0, else INCONCLUSIVE) — no H₀/H₁ LLR columns in `metrics_gates.csv`.
+- **Resignation off**; workers 2; 200k replay; 2.5e-4 flat LR; 100 sims.
+
+### Iter 161 — value_target=root_q (current)
+
+- **One change** vs claim_draw-restored recipe: self-play value labels use per-ply **`searched_root_q`** (`--value-target root_q`) instead of terminal game outcome (±1 / −draw_penalty).
+- Policy targets unchanged (Gumbel improved policy). Search still uses `draw_contempt = draw_penalty` and `claim_draw=True`. Gates unchanged (WDL outcomes).
+- Wired in `colab/train.ipynb`, `lightning-ai/run_train.py`, and `lightning-ai/train.ipynb` TRAIN dicts.
+- Abort watch: `value_std` should rise or stay high (not collapse toward 0); threefold count must stay ~2/128; do not trust train loss alone.
+
+Last updated: 2026-07-11.

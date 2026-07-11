@@ -38,7 +38,6 @@ from .sprt import (
     sprt_decision,
     sprt_elo,
     sprt_llr,
-    sprt_verdict_label,
 )
 from .selfplay import (
     EvalRequest,
@@ -319,8 +318,17 @@ GATE_CSV_HEADER = (
     "wins_as_white,wins_as_black,losses_as_white,losses_as_black,"
     "draws_as_white,draws_as_black,"
     "winrate,wins,draws,losses,mean_game_len,terminations,"
-    "elo,elo_lower,elo_upper,los,llr,decision,verdict\n"
+    "elo,elo_lower,elo_upper,los,verdict\n"
 )
+
+
+def _elo_ci_verdict(elo_lower: float, elo_upper: float) -> str:
+    """Gate label from the Elo 95% CI (no SPRT H0/H1 band)."""
+    if elo_upper < 0:
+        return "FAIL"
+    if elo_lower > 0:
+        return "PASS"
+    return "INCONCLUSIVE"
 
 ANCHOR_CSV_HEADER = (
     "iter,anchor_iter,games,winrate,elo,elo_lower,elo_upper,los\n"
@@ -390,14 +398,8 @@ def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games
     losses = metrics["losses_as_white"] + metrics["losses_as_black"]
     draws = metrics["draws_as_white"] + metrics["draws_as_black"]
     games_played = int(metrics.get("games_played", wins + draws + losses))
-    elo0 = float(metrics.get("elo0", ELO0))
-    elo1 = float(metrics.get("elo1", ELO1))
-
-    llr = float(metrics.get("llr", sprt_llr(wins, draws, losses, elo0, elo1)))
-    llr_lower, llr_upper = sprt_bounds()
-    decision = metrics.get("sprt_decision") or sprt_decision(llr, llr_lower, llr_upper)
-    verdict = sprt_verdict_label(decision)
     elo, elo_lower, elo_upper, los = sprt_elo(wins, draws, losses)
+    verdict = _elo_ci_verdict(elo_lower, elo_upper)
 
     with open(path, "a", encoding="utf-8") as f:
         if new:
@@ -410,7 +412,7 @@ def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games
             f"{metrics['winrate']:.6f},{wins},{draws},{losses},"
             f"{metrics['mean_game_len']:.2f},{metrics['terminations']},"
             f"{elo:.2f},{elo_lower:.2f},{elo_upper:.2f},{los:.6f},"
-            f"{llr:.6f},{decision},{verdict}\n"
+            f"{verdict}\n"
         )
 
 
@@ -470,8 +472,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     match_cfg.beauty.enabled = False
     # Strength gates use normal chess: draws score 0.5, search treats draws as 0.
     match_cfg.mcts.draw_contempt = 0.0
-    # Pin explicitly so in-loop gates (training cfg has claim_draw=False for
-    # speed) and manual gates (fresh Config) measure with identical search.
+    # Pin claim_draw so gates always match self-play search (Config default True).
     match_cfg.mcts.claim_draw = True
     # No artificial ply cap — Syzygy, 50-move, threefold, etc. end games naturally.
     match_cfg.train.max_game_moves = 10_000
@@ -830,6 +831,8 @@ def main() -> None:
                         help="self-play truncation cap (C2 shaping)")
     parser.add_argument("--draw-penalty", type=float, default=None,
                         help="target for draw outcomes (C2 shaping)")
+    parser.add_argument("--value-target", choices=("outcome", "root_q"), default=None,
+                        help="self-play value labels: terminal outcome or per-ply MCTS root Q")
     parser.add_argument("--resign-threshold", type=float, default=None,
                         help="enable resignation when root value <= threshold")
     parser.add_argument("--resign-plies", type=int, default=None,
@@ -940,6 +943,8 @@ def main() -> None:
         cfg.train.max_game_moves = args.max_game_moves
     if args.draw_penalty is not None:
         cfg.train.draw_penalty = args.draw_penalty
+    if args.value_target is not None:
+        cfg.train.value_target = args.value_target
     if args.resign_threshold is not None:
         cfg.train.resign_threshold = args.resign_threshold
     if args.resign_plies is not None:
@@ -949,8 +954,6 @@ def main() -> None:
     args.gate_exploration_moves = max(0, int(args.gate_exploration_moves))
     # Keep self-play search contempt aligned with the draw target shaping.
     cfg.mcts.draw_contempt = cfg.train.draw_penalty
-    # Outer game loop claims draws; skip expensive per-node repetition checks in search.
-    cfg.mcts.claim_draw = False
     print(
         "config: "
         f"games={cfg.train.games_per_iteration} "
@@ -965,6 +968,7 @@ def main() -> None:
         f"tb_max_pieces={cfg.train.tb_max_pieces} "
         f"syzygy_path={cfg.train.syzygy_path or 'off'} "
         f"draw_penalty={cfg.train.draw_penalty:.3f} "
+        f"value_target={cfg.train.value_target} "
         f"resign_threshold={cfg.train.resign_threshold:.3f} "
         f"resign_plies={cfg.train.resign_plies} "
         f"resign_min_moves={cfg.train.resign_min_moves} "
@@ -1302,13 +1306,16 @@ def main() -> None:
                                 total_wins = gate_metrics["wins_as_white"] + gate_metrics["wins_as_black"]
                                 total_losses = gate_metrics["losses_as_white"] + gate_metrics["losses_as_black"]
                                 total_draws = gate_metrics["draws_as_white"] + gate_metrics["draws_as_black"]
-                                sprt_label = sprt_verdict_label(gate_metrics["sprt_decision"])
                                 games_played = int(gate_metrics["games_played"])
+                                ci_verdict = _elo_ci_verdict(
+                                    float(gate_metrics["elo_lower"]),
+                                    float(gate_metrics["elo_upper"]),
+                                )
                                 print(
                                     f"gate iter {it}: current vs {os.path.basename(previous_snapshot)} "
                                     f"-> {gate_metrics['winrate']:.3f} (Wins: {total_wins}, Losses: {total_losses}, "
                                     f"Draws: {total_draws}, games: {games_played}) "
-                                    f"SPRT {sprt_label} (llr={gate_metrics['llr']:.2f}) "
+                                    f"{ci_verdict} "
                                     f"Elo {gate_metrics['elo']:+.1f} "
                                     f"[95% {gate_metrics['elo_lower']:+.1f}, {gate_metrics['elo_upper']:+.1f}] "
                                     f"LOS {gate_metrics['los'] * 100:.1f}%"

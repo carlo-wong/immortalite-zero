@@ -247,3 +247,76 @@ def test_searched_root_q_used_for_max_moves_bootstrap() -> None:
     assert len(game.samples) == 1
     assert np.isclose(game.samples[0].value, 0.0)
     assert not np.isclose(game.samples[0].value, 0.9)
+
+
+def test_root_q_value_target_keeps_per_ply_search_q() -> None:
+    """value_target=root_q must not overwrite with terminal ±1 / draw_penalty."""
+    cfg = Config()
+    cfg.train.value_target = "root_q"
+    board = chess.Board()
+    for san in ("f3", "e5", "g4", "Qh4#"):
+        board.push_san(san)
+    outcome = board.outcome(claim_draw=True)
+    assert outcome is not None
+
+    samples = _sample_pair()
+    samples[0].root_q = 0.42
+    samples[1].root_q = -0.77
+    term = _termination_reason(outcome, hit_max_moves=False, no_legal_moves=False)
+    _assign_values(samples, outcome, term, cfg, move_count=len(board.move_stack))
+
+    assert term == "checkmate"
+    assert samples[0].value == pytest.approx(0.42)
+    assert samples[1].value == pytest.approx(-0.77)
+
+
+def test_root_q_value_target_ignores_draw_penalty_overwrite() -> None:
+    cfg = Config()
+    cfg.train.value_target = "root_q"
+    cfg.train.draw_penalty = 1 / 3
+    board = chess.Board("7k/5Q2/7K/8/8/8/8/8 b - - 0 1")
+    outcome = board.outcome(claim_draw=True)
+    assert outcome is not None
+
+    samples = _sample_pair()
+    samples[0].root_q = 0.15
+    samples[1].root_q = -0.05
+    term = _termination_reason(outcome, hit_max_moves=False, no_legal_moves=False)
+    _assign_values(samples, outcome, term, cfg, move_count=0)
+
+    assert term == "stalemate"
+    assert samples[0].value == pytest.approx(0.15)
+    assert samples[1].value == pytest.approx(-0.05)
+    assert samples[0].value != -cfg.train.draw_penalty
+
+
+def test_root_q_mode_play_game_stores_search_labels() -> None:
+    cfg = Config()
+    cfg.train.value_target = "root_q"
+    cfg.train.max_game_moves = 3
+    cfg.mcts.simulations = 8
+    cfg.mcts.dirichlet_epsilon = 0.0
+
+    class ConstantEvaluator:
+        def evaluate(self, board: chess.Board) -> tuple[np.ndarray, float]:
+            # Side-to-move POV: White optimistic, Black pessimistic.
+            value = 0.6 if board.turn == chess.WHITE else -0.4
+            return np.zeros(POLICY_SIZE, dtype=np.float32), value
+
+    game = play_game(ConstantEvaluator(), cfg, simulations=8)
+    assert game.termination == "max_moves"
+    assert len(game.samples) == 3
+    for s in game.samples:
+        assert s.value == pytest.approx(s.root_q)
+        assert -1.0 <= s.value <= 1.0
+    # Not collapsed to a single terminal outcome label.
+    assert not all(s.value == -cfg.train.draw_penalty for s in game.samples)
+    assert not all(abs(s.value) == 1.0 for s in game.samples)
+
+
+def test_unknown_value_target_raises() -> None:
+    cfg = Config()
+    cfg.train.value_target = "bogus"
+    samples = _sample_pair()
+    with pytest.raises(ValueError, match="unknown value_target"):
+        _assign_values(samples, None, "stalemate", cfg, move_count=0)

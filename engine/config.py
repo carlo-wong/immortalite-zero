@@ -63,6 +63,10 @@ class TrainConfig:
     tb_max_pieces: int = 5
     # Football 3-1-0 shaping: draw target = -1/3 (draw worth ~one-third of a win).
     draw_penalty: float = 1 / 3
+    # Value label source for self-play samples:
+    #   "outcome" — classic AZ: terminal z (±1 / -draw_penalty) for every ply
+    #   "root_q"  — per-ply MCTS searched_root_q (side-to-move POV)
+    value_target: str = "outcome"
     # Optional self-play resignation. Disabled by default.
     resign_threshold: float = -1.1  # enable with value in [-1, 1]
     resign_plies: int = 0            # consecutive plies below threshold before resign

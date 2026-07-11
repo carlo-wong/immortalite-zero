@@ -30,6 +30,7 @@ class Sample:
     player: chess.Color
     value: float = 0.0      # filled in once the game finishes
     source_iter: int = 0
+    root_q: float = 0.0     # STM-POV searched_root_q at this ply (for value_target=root_q)
 
 
 @dataclass
@@ -127,6 +128,7 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
             policy.astype(np.float16),
             board.turn,
             source_iter=source_iter,
+            root_q=last_root_value,
         ))
 
         resign_enabled = cfg.train.resign_plies > 0 and cfg.train.resign_threshold >= -1.0
@@ -273,6 +275,7 @@ def _config_to_dict(cfg: Config) -> dict:
             "syzygy_path": cfg.train.syzygy_path,
             "tb_max_pieces": cfg.train.tb_max_pieces,
             "draw_penalty": cfg.train.draw_penalty,
+            "value_target": cfg.train.value_target,
             "resign_threshold": cfg.train.resign_threshold,
             "resign_plies": cfg.train.resign_plies,
             "resign_min_moves": cfg.train.resign_min_moves,
@@ -731,6 +734,19 @@ def _assign_values(samples: list[Sample], outcome: chess.Outcome | None,
                    termination: str, cfg: Config, move_count: int,
                    winner_override: chess.Color | None = None,
                    truncation_bootstrap: float = 0.0) -> None:
+    # Per-ply MCTS value labels: keep each position's searched_root_q (STM POV).
+    # Search already applies draw_contempt at terminals; do not overwrite with z.
+    if cfg.train.value_target == "root_q":
+        for s in samples:
+            s.value = float(s.root_q)
+        return
+
+    if cfg.train.value_target != "outcome":
+        raise ValueError(
+            f"unknown value_target={cfg.train.value_target!r}; "
+            "expected 'outcome' or 'root_q'"
+        )
+
     if termination == "max_moves" and samples:
         # Max-move truncation is a cutoff, not a terminal chess result. Bootstrap
         # from the final root value so long games don't collapse to all-zero labels.

@@ -53,8 +53,8 @@ def main() -> None:
     from engine.config import Config, NetConfig
     from engine.encoding import ENCODING_VERSION
     from engine.network import ChessNet
-    from engine.sprt import ALPHA, BETA, ELO0, ELO1, sprt_verdict_label
-    from engine.train import _load_matching_state_dict, _log_gate_metrics, play_match
+    from engine.sprt import ALPHA, BETA, ELO0, ELO1
+    from engine.train import _elo_ci_verdict, _load_matching_state_dict, _log_gate_metrics, play_match
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     cfg = Config()
@@ -120,7 +120,7 @@ def main() -> None:
     losses = metrics["losses_as_white"] + metrics["losses_as_black"]
     draws = metrics["draws_as_white"] + metrics["draws_as_black"]
     wdl = f"+{wins} ={draws} -{losses}"
-    sprt_label = sprt_verdict_label(metrics["sprt_decision"])
+    ci_verdict = _elo_ci_verdict(float(metrics["elo_lower"]), float(metrics["elo_upper"]))
     games_played = int(metrics["games_played"])
 
     print("\n" + "=" * 40)
@@ -130,14 +130,14 @@ def main() -> None:
     print(f"  As Black: W {metrics['wins_as_black']} L {metrics['losses_as_black']} D {metrics['draws_as_black']}")
     print(f"  Mean game length: {metrics['mean_game_len']:.1f} plies")
     print(f"  Terminations: {metrics['terminations']}")
-    print(f"  SPRT: {sprt_label} (llr={metrics['llr']:.2f}, decision={metrics['sprt_decision']})")
     print(
-        f"  Elo: {metrics['elo']:+.1f} "
+        f"  Verdict: {ci_verdict} "
+        f"Elo {metrics['elo']:+.1f} "
         f"[95% CI {metrics['elo_lower']:+.1f}, {metrics['elo_upper']:+.1f}] "
         f"LOS {metrics['los'] * 100:.1f}%"
     )
     print(f"  Logged to: {os.path.join(paths.ckpt_dir, 'metrics_gates.csv')}")
-    print(f"Result: {label_a} {sprt_label} vs {label_b}")
+    print(f"Result: {label_a} {ci_verdict} vs {label_b}")
     print("=" * 40)
 
 

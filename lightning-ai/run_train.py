@@ -37,6 +37,8 @@ TRAIN = {
     "replay_buffer": 200_000,
     "replay_window": 200_000,
     "draw_penalty": 1 / 3,
+    # Per-ply MCTS root Q value labels (option B); gates still use WDL outcomes.
+    "value_target": "root_q",
     "gate_games": 128,
     "gate_workers": 4,
     "gate_concurrency": 128,
@@ -110,6 +112,7 @@ def main() -> None:
         "--replay-window", str(TRAIN["replay_window"]),
         "--sims", str(TRAIN["sims"]),
         "--draw-penalty", str(TRAIN["draw_penalty"]),
+        "--value-target", str(TRAIN["value_target"]),
         *resign_args,
         "--syzygy-path", paths.tb_dir,
         "--save-every", str(TRAIN["save_every"]),
