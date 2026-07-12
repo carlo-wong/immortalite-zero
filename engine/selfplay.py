@@ -7,7 +7,7 @@ import os
 import random
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Generator
 
 import chess
@@ -21,6 +21,7 @@ from .mcts import MCTS
 from .network import ChessNet, NetEvaluator
 
 _EXPLORATION_MOVES = 20  # sample from the policy for this many plies, then argmax
+GATE_OPENING_PLIES = 8
 
 
 @dataclass
@@ -43,6 +44,10 @@ class EvalRequest:
 class GameResult:
     samples: list[Sample]
     termination: str
+    # Actual game winner (None for draws / truncations). Must not be inferred from
+    # sample.value — that breaks when value_target=root_q (per-ply search Q).
+    winner: chess.Color | None = None
+    moves: list[str] = field(default_factory=list)  # UCI moves played
 
 
 _DRAW_TERMINATION_NAMES = {
@@ -87,6 +92,7 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
     board = chess.Board()
     mcts = MCTS(None, cfg.mcts)
     samples: list[Sample] = []
+    moves: list[str] = []
     move_count = 0
     no_legal_moves = False
     resigned_winner: chess.Color | None = None
@@ -149,6 +155,7 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
             move = result.best_move()
 
         board.push(move)
+        moves.append(move.uci())
         move_count += 1
 
     outcome = board.outcome(claim_draw=True)
@@ -168,7 +175,35 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
         winner_override=winner_override,
         truncation_bootstrap=last_root_value,
     )
-    return GameResult(samples=samples, termination=termination)
+    if termination in {"checkmate", "resign", "tablebase_win"}:
+        if winner_override is not None:
+            winner = winner_override
+        elif outcome is not None:
+            winner = outcome.winner
+        else:
+            winner = None
+    else:
+        winner = None
+    return GameResult(samples=samples, termination=termination, winner=winner, moves=moves)
+
+
+def _gate_result_letter(winner: int, a_is_white: bool) -> str:
+    if winner == 0:
+        return "D"
+    if (winner == 1 and a_is_white) or (winner == -1 and not a_is_white):
+        return "W"
+    return "L"
+
+
+def _opening_row(game_idx: int, a_is_white: bool, game: GameResult, winner: int) -> dict[str, Any]:
+    return {
+        "game_idx": game_idx,
+        "a_is_white": int(a_is_white),
+        "opening_uci": " ".join(game.moves[:GATE_OPENING_PLIES]),
+        "result": _gate_result_letter(winner, a_is_white),
+        "termination": game.termination,
+        "plies": len(game.samples),
+    }
 
 
 def play_game(evaluator: NetEvaluator, cfg: Config, simulations: int,
@@ -360,14 +395,12 @@ def _selfplay_worker(payload: dict) -> tuple[
 
 
 def _winner_of_worker(game: GameResult) -> int:
-    if game.termination not in {"checkmate", "resign", "tablebase_win"} or not game.samples:
+    """Map GameResult → +1 white win / -1 black win / 0 draw-or-other."""
+    if game.termination not in {"checkmate", "resign", "tablebase_win"}:
         return 0
-    first = game.samples[0]
-    if first.value == 0.0:
+    if game.winner is None:
         return 0
-    winner_is_first_player = first.value > 0.0
-    winner_is_white = bool(first.player) if winner_is_first_player else not bool(first.player)
-    return 1 if winner_is_white else -1
+    return 1 if game.winner == chess.WHITE else -1
 
 
 def play_games_parallel(
@@ -449,18 +482,27 @@ class _MatchChunkStats:
     draws_b: int = 0
     game_lengths: list[int] | None = None
     termination_counts: Counter[str] | None = None
+    openings: list[dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         if self.game_lengths is None:
             self.game_lengths = []
         if self.termination_counts is None:
             self.termination_counts = Counter()
+        if self.openings is None:
+            self.openings = []
 
 
-def _record_match_game(stats: _MatchChunkStats, game: GameResult, a_is_white: bool) -> None:
+def _record_match_game(
+    stats: _MatchChunkStats,
+    game: GameResult,
+    a_is_white: bool,
+    game_idx: int,
+) -> None:
     winner = _winner_of_worker(game)
     stats.game_lengths.append(len(game.samples))
     stats.termination_counts[game.termination] += 1
+    stats.openings.append(_opening_row(game_idx, a_is_white, game, winner))
     if winner == 0:
         stats.score += 0.5
         if a_is_white:
@@ -494,12 +536,13 @@ def _run_match_games(
 ) -> _MatchChunkStats:
     stats = _MatchChunkStats()
     concurrency = max(1, min(n_games, match_cfg.train.selfplay_concurrency))
-    active: list[tuple[object, EvalRequest, bool]] = []
+    active: list[tuple[object, EvalRequest, bool, int]] = []
     launched = 0
 
     while launched < n_games or active:
         while launched < n_games and len(active) < concurrency:
-            a_is_white = ((start_game_index + launched) % 2) == 0
+            game_idx = start_game_index + launched
+            a_is_white = (game_idx % 2) == 0
             gen = play_game_gen(
                 match_cfg,
                 sims,
@@ -507,7 +550,7 @@ def _run_match_games(
                 exploration_moves=exploration_moves,
                 tablebase=tablebase,
             )
-            active.append((gen, next(gen), a_is_white))
+            active.append((gen, next(gen), a_is_white, game_idx))
             launched += 1
 
         if not active:
@@ -517,7 +560,7 @@ def _run_match_games(
         a_boards: list[chess.Board] = []
         b_indices: list[int] = []
         b_boards: list[chess.Board] = []
-        for idx, (_, pending, a_is_white) in enumerate(active):
+        for idx, (_, pending, a_is_white, _) in enumerate(active):
             if pending.search_turn == a_is_white:
                 a_indices.append(idx)
                 a_boards.append(pending.board)
@@ -535,14 +578,14 @@ def _run_match_games(
             for idx, logits, value in zip(b_indices, b_logits_batch, b_values_batch):
                 pending_eval[idx] = (logits, float(value))
 
-        next_active: list[tuple[object, EvalRequest, bool]] = []
-        for idx, (gen, _, a_is_white) in enumerate(active):
+        next_active: list[tuple[object, EvalRequest, bool, int]] = []
+        for idx, (gen, _, a_is_white, game_idx) in enumerate(active):
             logits, value = pending_eval[idx]
             try:
                 pending = gen.send((logits, value))
-                next_active.append((gen, pending, a_is_white))
+                next_active.append((gen, pending, a_is_white, game_idx))
             except StopIteration as stop:
-                _record_match_game(stats, stop.value, a_is_white)
+                _record_match_game(stats, stop.value, a_is_white, game_idx)
                 if on_game_finished is not None:
                     on_game_finished()
         active = next_active
@@ -616,6 +659,7 @@ def _match_worker(payload: dict) -> dict[str, Any]:
             "draws_b": stats.draws_b,
             "game_lengths": stats.game_lengths,
             "termination_counts": dict(stats.termination_counts),
+            "openings": stats.openings,
         }
     finally:
         if tablebase is not None:
@@ -702,6 +746,7 @@ def play_match_parallel(
         merged.draws_b += int(chunk["draws_b"])
         merged.game_lengths.extend(chunk["game_lengths"])
         merged.termination_counts.update(chunk["termination_counts"])
+        merged.openings.extend(chunk.get("openings") or [])
 
     return merged
 

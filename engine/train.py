@@ -20,6 +20,7 @@ from collections import Counter, deque
 from dataclasses import asdict
 from typing import Callable
 
+import chess
 import chess.syzygy
 import numpy as np
 import torch
@@ -41,8 +42,10 @@ from .sprt import (
 )
 from .selfplay import (
     EvalRequest,
+    GATE_OPENING_PLIES,
     GameResult,
     Sample,
+    _opening_row,
     play_game_gen,
     play_games_batched,
     play_games_parallel,
@@ -321,6 +324,10 @@ GATE_CSV_HEADER = (
     "elo,elo_lower,elo_upper,los,verdict\n"
 )
 
+GATE_OPENINGS_CSV_HEADER = (
+    "iter,prev_iter,game_idx,a_is_white,opening_uci,result,termination,plies\n"
+)
+
 
 def _elo_ci_verdict(elo_lower: float, elo_upper: float) -> str:
     """Gate label from the Elo 95% CI (no SPRT H0/H1 band)."""
@@ -415,17 +422,49 @@ def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games
             f"{verdict}\n"
         )
 
+    openings = list(metrics.get("openings") or [])
+    openings.sort(key=lambda row: int(row.get("game_idx", 0)))
+    if openings:
+        openings_path = os.path.join(ckpt_dir, "metrics_gates_openings.csv")
+        openings_new = not os.path.exists(openings_path)
+        with open(openings_path, "a", encoding="utf-8") as f:
+            if openings_new:
+                f.write(GATE_OPENINGS_CSV_HEADER)
+            for row in openings:
+                f.write(
+                    f"{it},{prev_it},{row['game_idx']},{row['a_is_white']},"
+                    f"{row['opening_uci']},{row['result']},{row['termination']},"
+                    f"{row['plies']}\n"
+                )
+    print(_opening_summary(openings), flush=True)
+
+
+def _opening_summary(openings: list[dict]) -> str:
+    if not openings:
+        return "gate openings: none"
+    prefixes = [str(o.get("opening_uci", "")) for o in openings]
+    counts = Counter(prefixes)
+    unique = len(counts)
+    top_prefix, top_n = counts.most_common(1)[0]
+    top_share = top_n / len(openings)
+    first_moves = Counter(
+        (p.split()[0] if p else "") for p in prefixes
+    )
+    first_hist = ",".join(f"{m}:{c}" for m, c in first_moves.most_common())
+    return (
+        f"gate openings: n={len(openings)} unique={unique} "
+        f"top_share={top_share:.2f} top={top_prefix!r} "
+        f"first=[{first_hist}] (plies={GATE_OPENING_PLIES})"
+    )
+
 
 def _winner_of(game: GameResult) -> int:
     """Return +1 for white win, -1 for black win, 0 for non-decisive result."""
-    if game.termination not in {"checkmate", "resign", "tablebase_win"} or not game.samples:
+    if game.termination not in {"checkmate", "resign", "tablebase_win"}:
         return 0
-    first = game.samples[0]
-    if first.value == 0.0:
+    if game.winner is None:
         return 0
-    winner_is_first_player = first.value > 0.0
-    winner_is_white = bool(first.player) if winner_is_first_player else not bool(first.player)
-    return 1 if winner_is_white else -1
+    return 1 if game.winner == chess.WHITE else -1
 
 
 def _snapshot_at_iter(ckpt_dir: str, iteration: int) -> str | None:
@@ -466,6 +505,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             "games_played": 0,
             "elo0": sprt_elo0,
             "elo1": sprt_elo1,
+            "openings": [],
         }
 
     match_cfg = deepcopy(cfg)
@@ -561,6 +601,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             "games_played": games_played,
             "elo0": sprt_elo0 if sprt else float("nan"),
             "elo1": sprt_elo1 if sprt else float("nan"),
+            "openings": list(merged.openings or []),
         }
 
     eval_a = NetEvaluator(net_a, device=device)
@@ -574,12 +615,14 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     draws_b = 0
     game_lengths = []
     termination_counts: Counter[str] = Counter()
+    openings: list[dict] = []
 
-    def _record_game_result(game: GameResult, a_is_white: bool) -> None:
+    def _record_game_result(game: GameResult, a_is_white: bool, game_idx: int) -> None:
         nonlocal score, wins_w, wins_b, losses_w, losses_b, draws_w, draws_b
         winner = _winner_of(game)
         game_lengths.append(len(game.samples))
         termination_counts[game.termination] += 1
+        openings.append(_opening_row(game_idx, a_is_white, game, winner))
 
         if winner == 0:
             score += 0.5
@@ -600,7 +643,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
                 losses_b += 1
 
     concurrency = max(1, min(n_games, cfg.train.selfplay_concurrency))
-    active: list[tuple[object, EvalRequest, bool]] = []
+    active: list[tuple[object, EvalRequest, bool, int]] = []
     launched = 0
     completed = 0
     sprt_lower, sprt_upper = sprt_bounds(sprt_alpha, sprt_beta) if sprt else (float("nan"), float("nan"))
@@ -618,7 +661,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
                 exploration_moves=exploration_moves,
                 tablebase=tablebase,
             )
-            active.append((gen, next(gen), a_is_white))
+            active.append((gen, next(gen), a_is_white, launched))
             launched += 1
 
         if not active:
@@ -628,7 +671,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
         a_boards: list[chess.Board] = []
         b_indices: list[int] = []
         b_boards: list[chess.Board] = []
-        for idx, (_, pending, a_is_white) in enumerate(active):
+        for idx, (_, pending, a_is_white, _) in enumerate(active):
             search_uses_a = (pending.search_turn == a_is_white)
             if search_uses_a:
                 a_indices.append(idx)
@@ -647,14 +690,14 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             for idx, logits, value in zip(b_indices, b_logits_batch, b_values_batch):
                 pending_eval[idx] = (logits, float(value))
 
-        next_active: list[tuple[object, EvalRequest, bool]] = []
-        for idx, (gen, _, a_is_white) in enumerate(active):
+        next_active: list[tuple[object, EvalRequest, bool, int]] = []
+        for idx, (gen, _, a_is_white, game_idx) in enumerate(active):
             logits, value = pending_eval[idx]
             try:
                 pending = gen.send((logits, value))
-                next_active.append((gen, pending, a_is_white))
+                next_active.append((gen, pending, a_is_white, game_idx))
             except StopIteration as stop:
-                _record_game_result(stop.value, a_is_white)
+                _record_game_result(stop.value, a_is_white, game_idx)
                 completed += 1
                 gate_bar.update(1)
                 gate_bar.set_postfix(score=f"{score / completed:.3f}")
@@ -701,6 +744,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
         "games_played": games_played,
         "elo0": sprt_elo0 if sprt else float("nan"),
         "elo1": sprt_elo1 if sprt else float("nan"),
+        "openings": openings,
     }
 
 

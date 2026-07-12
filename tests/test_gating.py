@@ -71,6 +71,15 @@ def test_play_match_returns_expected_metrics_dict() -> None:
     )
     assert total_games == n_games
     assert 0.0 <= metrics["winrate"] <= 1.0
+    assert "openings" in metrics
+    assert len(metrics["openings"]) == n_games
+    for row in metrics["openings"]:
+        assert "game_idx" in row
+        assert "opening_uci" in row
+        assert "result" in row
+        assert row["result"] in {"W", "D", "L"}
+        uci_moves = row["opening_uci"].split() if row["opening_uci"] else []
+        assert len(uci_moves) <= 8
 
 
 def test_log_gate_metrics_writes_correct_csv() -> None:
@@ -122,6 +131,73 @@ def test_log_gate_metrics_writes_correct_csv() -> None:
         assert row["terminations"] == metrics["terminations"]
         # 17 wins / 2 draws / 1 loss → Elo CI above 0 → PASS
         assert row["verdict"] == "PASS"
+        assert not os.path.exists(os.path.join(tmpdir, "metrics_gates_openings.csv"))
+
+
+def test_log_gate_metrics_writes_openings_csv() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        metrics = {
+            "winrate": 0.5,
+            "wins_as_white": 1,
+            "wins_as_black": 0,
+            "losses_as_white": 0,
+            "losses_as_black": 1,
+            "draws_as_white": 0,
+            "draws_as_black": 0,
+            "mean_game_len": 40.0,
+            "terminations": "checkmate:2",
+            "games_played": 2,
+            "openings": [
+                {
+                    "game_idx": 1,
+                    "a_is_white": 0,
+                    "opening_uci": "e2e4 e7e5 g1f3 b8c6",
+                    "result": "L",
+                    "termination": "checkmate",
+                    "plies": 40,
+                },
+                {
+                    "game_idx": 0,
+                    "a_is_white": 1,
+                    "opening_uci": "d2d4 d7d5",
+                    "result": "W",
+                    "termination": "checkmate",
+                    "plies": 36,
+                },
+            ],
+        }
+        _log_gate_metrics(tmpdir, it=12, prev_it=10, metrics=metrics, games=2)
+        path = os.path.join(tmpdir, "metrics_gates_openings.csv")
+        assert os.path.exists(path)
+        df = pd.read_csv(path)
+        assert list(df.columns) == [
+            "iter", "prev_iter", "game_idx", "a_is_white",
+            "opening_uci", "result", "termination", "plies",
+        ]
+        assert len(df) == 2
+        # Sorted by game_idx
+        assert int(df.iloc[0]["game_idx"]) == 0
+        assert df.iloc[0]["opening_uci"] == "d2d4 d7d5"
+        assert df.iloc[0]["result"] == "W"
+        assert int(df.iloc[1]["game_idx"]) == 1
+        uci = str(df.iloc[1]["opening_uci"]).split()
+        assert len(uci) == 4
+        assert len(uci) <= 8
+
+
+def test_play_match_logs_opening_prefixes() -> None:
+    net_a, net_b, cfg = _tiny_nets()
+    cfg.train.max_game_moves = 12
+    metrics = play_match(net_a, net_b, cfg, n_games=2, sims=2, device="cpu", exploration_moves=4)
+    assert len(metrics["openings"]) == 2
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _log_gate_metrics(tmpdir, 3, 1, metrics, games=2)
+        df = pd.read_csv(os.path.join(tmpdir, "metrics_gates_openings.csv"))
+        assert len(df) == 2
+        for _, row in df.iterrows():
+            uci = str(row["opening_uci"]).split() if pd.notna(row["opening_uci"]) and row["opening_uci"] else []
+            assert len(uci) <= 8
+            assert row["result"] in {"W", "D", "L"}
 
 
 def test_log_metrics_winrate_vs_prev_nan_by_default() -> None:

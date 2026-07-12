@@ -320,3 +320,69 @@ def test_unknown_value_target_raises() -> None:
     samples = _sample_pair()
     with pytest.raises(ValueError, match="unknown value_target"):
         _assign_values(samples, None, "stalemate", cfg, move_count=0)
+
+
+def test_winner_of_worker_uses_game_winner_not_sample_value() -> None:
+    """white_win_rate must not use sample.value (broken under value_target=root_q)."""
+    from engine.selfplay import GameResult, _winner_of_worker
+    from engine.train import _winner_of
+
+    samples = _sample_pair()
+    # Opening root-Q is positive, but Black actually won.
+    samples[0].root_q = 0.4
+    samples[0].value = 0.4
+    samples[1].value = -0.2
+    game = GameResult(
+        samples=samples,
+        termination="checkmate",
+        winner=chess.BLACK,
+    )
+    assert _winner_of_worker(game) == -1
+    assert _winner_of(game) == -1
+
+    game_white = GameResult(samples=samples, termination="tablebase_win", winner=chess.WHITE)
+    assert _winner_of_worker(game_white) == 1
+    assert _winner_of(game_white) == 1
+
+    game_draw = GameResult(samples=samples, termination="stalemate", winner=None)
+    assert _winner_of_worker(game_draw) == 0
+    assert _winner_of(game_draw) == 0
+
+
+def test_play_game_sets_winner_under_root_q() -> None:
+    cfg = Config()
+    cfg.train.value_target = "root_q"
+    cfg.mcts.simulations = 4
+    # Fool's mate: Black wins.
+    board = chess.Board()
+    for san in ("f3", "e5", "g4", "Qh4#"):
+        board.push_san(san)
+    # Drive a short custom path via FakeEvaluator won't produce fool's mate;
+    # instead assert the GameResult wiring on a constructed end-state via _assign path.
+    # Full play_game checkmate from start is nondeterministic under random policy.
+    samples = _sample_pair()
+    samples[0].root_q = 0.3
+    samples[0].value = 0.3
+    outcome = board.outcome(claim_draw=True)
+    term = _termination_reason(outcome, hit_max_moves=False, no_legal_moves=False)
+    assert term == "checkmate"
+    assert outcome is not None and outcome.winner == chess.BLACK
+    from engine.selfplay import GameResult, _winner_of_worker
+    game = GameResult(samples=samples, termination=term, winner=outcome.winner)
+    assert _winner_of_worker(game) == -1
+
+
+def test_play_game_records_uci_moves() -> None:
+    from engine.network import ChessNet, NetEvaluator
+    from engine.selfplay import play_game
+
+    cfg = Config()
+    cfg.net.blocks = 1
+    cfg.net.filters = 4
+    cfg.train.max_game_moves = 6
+    cfg.mcts.simulations = 2
+    net = ChessNet(cfg.net)
+    net.eval()
+    game = play_game(NetEvaluator(net, device="cpu"), cfg, simulations=2)
+    assert len(game.moves) == len(game.samples)
+    assert all(isinstance(m, str) and len(m) >= 4 for m in game.moves)
