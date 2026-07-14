@@ -1,8 +1,6 @@
 # Training Immortalite Zero on Lightning AI
 
-Self-play on a Lightning AI Studio GPU. Same recipe as Colab, but checkpoints and Syzygy live in **sibling folders** you upload manually between sessions.
-
-> **Prefer `run_train.py`** over the notebook — training survives browser close (~4h studio limit still applies).
+Self-play on a Lightning AI Studio GPU via `run_train.py` / `run_gate.py`. Same recipe as Colab (except 4 self-play workers), but checkpoints and Syzygy live in **sibling folders** you upload manually between sessions.
 
 ---
 
@@ -12,8 +10,7 @@ Self-play on a Lightning AI Studio GPU. Same recipe as Colab, but checkpoints an
 parent/
 ├── immortalite-zero/       # git clone
 │   └── lightning-ai/
-│       ├── train.ipynb
-│       ├── run_train.py    # recommended
+│       ├── run_train.py
 │       ├── run_gate.py
 │       └── paths.py
 ├── results/                # upload before each session
@@ -36,7 +33,7 @@ python scripts/download_syzygy345.py --out syzygy345
 
 - Lightning AI account with GPU studio.
 - `results/` and `syzygy345/` as **siblings** of the repo (not inside it).
-- Push engine changes to GitHub; `git pull` in cell 1 or before `run_train.py`.
+- Push engine changes to GitHub; `git pull` before `run_train.py`.
 
 ---
 
@@ -47,7 +44,7 @@ python scripts/download_syzygy345.py --out syzygy345
 3. Upload `results/` and `syzygy345/` next to the repo.
 4. `pip install -q python-chess numpy tqdm`
 
-## Step 2 — Train (script recommended)
+## Step 2 — Train
 
 Edit `TRAIN` in `lightning-ai/run_train.py` if needed, then:
 
@@ -57,11 +54,11 @@ nohup python lightning-ai/run_train.py > ../results/train.log 2>&1 &
 tail -f ../results/train.log
 ```
 
-Writes `latest.pt`, `metrics.csv`, shards every iteration to `../results/`.
+Writes `latest.pt`, `metrics.csv`, shards every iteration to `../results/`. Training survives browser close (~4h studio limit still applies).
 
 ### Current `TRAIN` defaults
 
-Same as Colab cell 6 and `run_train.py`: bug-fix restart at iter **161** from `ckpt_iter_0160`. See `colab/README.md` and `TRAINING_CHANGELOG.md`.
+Same recipe as Colab except `selfplay_workers=4` (Lightning T4 has 4 vCPUs; Colab is 2). Bug-fix restart at iter **161** from `ckpt_iter_0160`. See `colab/README.md` and `TRAINING_CHANGELOG.md`.
 
 | Key | Value |
 |-----|-------|
@@ -69,7 +66,7 @@ Same as Colab cell 6 and `run_train.py`: bug-fix restart at iter **161** from `c
 | `games` | 128 |
 | `train_steps` | 800 |
 | `concurrency` | 128 |
-| `selfplay_workers` / `gate_workers` | 2 / 4 |
+| `selfplay_workers` / `gate_workers` | 4 / 4 |
 | `resign` | off |
 | `replay_buffer` / `replay_window` | 200k |
 | `gate_games` / `gate_sims` | 128 / 100 (manual gate only) |
@@ -77,21 +74,7 @@ Same as Colab cell 6 and `run_train.py`: bug-fix restart at iter **161** from `c
 | Training span | auto-stops at iters 160, 180, … (multiples of 20) |
 | `RESET_OPTIMIZER` | `False` |
 
-## Step 3 — Notebook alternative
-
-Open `lightning-ai/train.ipynb` — **keep the browser tab open** (kernel stops if closed).
-
-| Cell | What it does |
-|------|--------------|
-| 1 | Resolve `../results`, `../syzygy345`, `git pull` |
-| 2 | Install `python-chess` |
-| 3 | GPU check + `--gpu` preset |
-| 4 | Verify Syzygy (145 `.rtbw`) |
-| 5 | Train (`TRAIN` dict, same as script) |
-| 6 | Optional manual SPRT gate |
-| 7 | Plot metrics |
-
-## Step 4 — Manual gate
+## Step 3 — Manual gate
 
 Edit `CHECKPOINT_A` / `CHECKPOINT_B` in `lightning-ai/run_gate.py` (int or `"latest"`):
 
@@ -102,7 +85,7 @@ python lightning-ai/run_gate.py
 
 Appends to `../results/metrics_gates.csv` with SPRT columns. Prints PASS / FAIL / INCONCLUSIVE.
 
-## Step 5 — Sessions and resuming
+## Step 4 — Sessions and resuming
 
 When a studio ends, **download the updated `results/` folder**.
 
@@ -113,7 +96,7 @@ When a studio ends, **download the updated `results/` folder**.
 
 Rotate old `metrics_gates.csv` if upgrading from pre-SPRT recipes.
 
-## Step 6 — Use locally
+## Step 5 — Use locally
 
 ```bash
 python -m engine.inspect_encoding results/latest.pt
@@ -132,7 +115,7 @@ Open **http://localhost:8000/app/**
 | No CUDA | Select GPU machine, re-run |
 | Syzygy incomplete | All 145 `.rtbw` in `syzygy345/` sibling folder |
 | `results/` not found | Sibling of repo, not inside it |
-| Slow self-play | Keep `concurrency` = `games`; `selfplay_workers=2` (64 concurrency/worker) benchmarked fastest on T4-class GPUs |
+| Slow self-play | Keep `concurrency` = `games`; `selfplay_workers=4` on Lightning (4 vCPUs). Colab bench only tested 2 |
 | OOM | Lower `games` and `concurrency` together |
 
 Recipe history: **[TRAINING_CHANGELOG.md](../TRAINING_CHANGELOG.md)**

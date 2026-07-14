@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manual strength gate for Lightning AI (notebook cell 6 as a script).
+"""Manual strength gate for Lightning AI (terminal).
 
 Edit CHECKPOINT_A / CHECKPOINT_B below, then run from the terminal:
   cd immortalite-zero

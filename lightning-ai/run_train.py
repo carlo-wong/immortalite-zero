@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Self-play training for Lightning AI (notebook cell 5 as a script).
+"""Self-play training for Lightning AI (terminal / nohup).
 
 Runs in the terminal so training continues after you close the browser.
-Same sibling-folder layout as train.ipynb: ../results and ../syzygy345.
+Sibling-folder layout: ../results and ../syzygy345.
 
 Example (background, survives browser close):
   cd immortalite-zero
@@ -24,7 +24,7 @@ if _SCRIPT_DIR not in sys.path:
 
 from paths import ensure_ckpt_dir, resolve_paths, validate_syzygy
 
-# --- edit training settings here (matches lightning-ai/train.ipynb cell 5) ---
+# --- edit training settings here ---
 STOP_INTERVAL = 20  # stop after completing iters 160, 180, 200, …
 
 TRAIN = {
@@ -33,7 +33,7 @@ TRAIN = {
     "games": 128,
     "train_steps": 800,
     "concurrency": 128,
-    "selfplay_workers": 2,
+    "selfplay_workers": 4,  # Lightning T4 has 4 vCPUs; Colab bench was 2-vCPU only
     "replay_buffer": 200_000,
     "replay_window": 200_000,
     "draw_penalty": 1 / 3,

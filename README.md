@@ -34,8 +34,7 @@ web/react/              optional React + Chessground GUI (/app-react/)
 colab/train.ipynb       Google Colab training notebook
 colab/README.md         Colab step-by-step guide
 lightning-ai/
-  train.ipynb           Lightning AI notebook workflow
-  run_train.py          background training script (recommended)
+  run_train.py          background training script
   run_gate.py           manual checkpoint gate script
   README.md             Lightning AI guide
 scripts/download_syzygy345.py   one-time Syzygy download

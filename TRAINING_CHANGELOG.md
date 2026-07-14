@@ -108,7 +108,7 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 
 - **One change** vs claim_draw-restored recipe: self-play value labels use per-ply **`searched_root_q`** (`--value-target root_q`) instead of terminal game outcome (±1 / −draw_penalty).
 - Policy targets unchanged (Gumbel improved policy). Search still uses `draw_contempt = draw_penalty` and `claim_draw=True`. Gates unchanged (WDL outcomes).
-- Wired in `colab/train.ipynb`, `lightning-ai/run_train.py`, and `lightning-ai/train.ipynb` TRAIN dicts.
+- Wired in `colab/train.ipynb` and `lightning-ai/run_train.py` TRAIN dicts.
 - Abort watch: `value_std` should rise or stay high (not collapse toward 0); threefold count must stay ~2/128; do not trust train loss alone.
 
 Last updated: 2026-07-11.
