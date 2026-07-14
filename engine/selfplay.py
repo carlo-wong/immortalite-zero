@@ -362,6 +362,10 @@ def _selfplay_worker(payload: dict) -> tuple[
         model_state = state["model"] if isinstance(state, dict) and "model" in state else state
         net.load_state_dict(model_state, strict=True)
         net.to(device).eval()
+        # Match train.py workers=1 path: compile after load. Pool respawns each
+        # iter, so compile warms once per worker process (~once per train iter).
+        if device.startswith("cuda") and hasattr(torch, "compile"):
+            net = torch.compile(net, dynamic=True)
 
         evaluator = NetEvaluator(net, device=device)
         samples: list[Sample] = []
