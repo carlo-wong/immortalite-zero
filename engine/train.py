@@ -29,6 +29,10 @@ from tqdm.auto import tqdm
 
 from .config import Config, NetConfig
 from .encoding import ENCODING_VERSION
+from .first_move_stats import (
+    summarize_first_moves,
+    summarize_first_moves_from_shard,
+)
 from .network import ChessNet, NetEvaluator
 from .sprt import (
     ALPHA,
@@ -293,6 +297,37 @@ def _log_step_metrics(ckpt_dir: str, it: int, step: int, metrics: dict[str, floa
             f"{metrics['policy_entropy']:.6f},{metrics['value_sign_acc']:.6f},"
             f"{metrics['policy_top1_agree']:.6f},{metrics['grad_norm']:.6f}\n"
         )
+
+
+def _log_first_move_metrics(ckpt_dir: str, it: int, stats: dict) -> None:
+    """Append first-move diversity row and print a one-liner."""
+    os.makedirs(ckpt_dir or ".", exist_ok=True)
+    path = os.path.join(ckpt_dir, "metrics_first_moves.csv")
+    new = not os.path.exists(path)
+    n = int(stats.get("n", 0) or 0)
+    entropy = float(stats.get("entropy", float("nan")))
+    d3 = float(stats.get("d3_share", float("nan")))
+    a4 = float(stats.get("a4_share", float("nan")))
+    main = float(stats.get("main_share", float("nan")))
+    top1_uci = str(stats.get("top1_uci", "") or "")
+    top1_share = float(stats.get("top1_share", float("nan")))
+
+    def _fmt(x: float) -> str:
+        return f"{x:.6f}" if math.isfinite(x) else "nan"
+
+    with open(path, "a", encoding="utf-8") as f:
+        if new:
+            f.write("iter,n,entropy,d3_share,a4_share,main_share,top1_uci,top1_share\n")
+        f.write(
+            f"{it},{n},{_fmt(entropy)},{_fmt(d3)},{_fmt(a4)},{_fmt(main)},"
+            f"{top1_uci},{_fmt(top1_share)}\n"
+        )
+    top1_note = f"{top1_uci}:{top1_share:.2f}" if top1_uci and math.isfinite(top1_share) else "none"
+    print(
+        f"first-moves: H={_fmt(entropy)} d3={_fmt(d3)} a4={_fmt(a4)} "
+        f"main={_fmt(main)} top1={top1_note} (n={n})",
+        flush=True,
+    )
 
 
 def _flush_step_metrics(ckpt_dir: str, it: int, rows: list[tuple[int, dict[str, float]]]) -> None:
@@ -950,6 +985,10 @@ def main() -> None:
                         help="gradient clip norm (default: cfg.train.grad_clip_norm)")
     parser.add_argument("--syzygy-path", type=str, default=None,
                         help="path to Syzygy WDL tablebase directory for self-play adjudication")
+    parser.add_argument("--move-temperature", type=float, default=1.0,
+                        help="early-ply move sampling temperature (1.0 = off)")
+    parser.add_argument("--move-temperature-plies", type=int, default=0,
+                        help="apply move temperature for first N plies (0 = disabled)")
     args = parser.parse_args()
 
     # Fall back to CPU if CUDA was requested but isn't available in this runtime.
@@ -1018,6 +1057,8 @@ def main() -> None:
         cfg.train.resign_plies = args.resign_plies
     if args.resign_min_moves is not None:
         cfg.train.resign_min_moves = args.resign_min_moves
+    cfg.train.move_temperature = float(args.move_temperature)
+    cfg.train.move_temperature_plies = max(0, int(args.move_temperature_plies))
     args.gate_exploration_moves = max(0, int(args.gate_exploration_moves))
     from engine.openings import load_default_gate_openings, load_opening_book
 
@@ -1048,6 +1089,8 @@ def main() -> None:
         f"resign_threshold={cfg.train.resign_threshold:.3f} "
         f"resign_plies={cfg.train.resign_plies} "
         f"resign_min_moves={cfg.train.resign_min_moves} "
+        f"move_temperature={cfg.train.move_temperature:.3f} "
+        f"move_temperature_plies={cfg.train.move_temperature_plies} "
         f"gate_games={args.gate_games} "
         f"gate_sims={args.gate_sims if args.gate_sims is not None else 'match-selfplay'} "
         f"gate_exploration_moves={args.gate_exploration_moves} "
@@ -1138,6 +1181,7 @@ def main() -> None:
             termination_counts: Counter[str] = Counter()
             game_lengths: list[int] = []
             game_outcomes: list[int] = []
+            first_moves: list[str] = []
             n_games = cfg.train.games_per_iteration
             game_bar = tqdm(total=n_games, desc=f"iter {it} self-play", unit="game", leave=False)
 
@@ -1154,6 +1198,8 @@ def main() -> None:
                 termination_counts[game.termination] += 1
                 game_lengths.append(len(game.samples))
                 game_outcomes.append(_winner_of(game))
+                if game.moves:
+                    first_moves.append(game.moves[0])
                 game_bar.set_postfix(moves=len(game.samples), buffer=len(buffer))
                 game_bar.update(1)
 
@@ -1203,6 +1249,16 @@ def main() -> None:
             buffer_min_iter, buffer_max_iter = _buffer_iter_range(buffer)
 
             _save_sample_shard(cfg.train.checkpoint_dir, it, iteration_samples)
+            if args.selfplay_workers > 1:
+                shard_path = _sample_shard_path(cfg.train.checkpoint_dir, it)
+                fm_stats = (
+                    summarize_first_moves_from_shard(shard_path)
+                    if os.path.isfile(shard_path)
+                    else summarize_first_moves([])
+                )
+            else:
+                fm_stats = summarize_first_moves(first_moves)
+            _log_first_move_metrics(cfg.train.checkpoint_dir, it, fm_stats)
 
             net.train()
             step_metrics: dict[str, list[float]] = {}

@@ -19,8 +19,9 @@ Gates run every 20 iters vs the checkpoint **20 iters ago**. Edit only the `TRAI
 | **161**§ | **128** | **800** | **128** | **1** | **200k** | **256 SPRT** | **2.5e-4 flat** | rewind to `ckpt_iter_0160`; 200 sims only; resign off — **reverted** (one-hot policy targets from c_scale=1.0 bug + worst-child root-Q bug; iters 161–180 discarded) |
 | **161**¶ | **128** | **800** | **128** | **2** | **200k** | **128 games** | **2.5e-4 flat** | claim_draw off in search — **reverted** (17× repetition draws corrupted value targets; gate 180 vs 160 −112 Elo FAIL; iters 161–180 discarded) |
 | **161** | **128** | **800** | **128** | **2** | **200k** | **128 games** (Elo CI) | **2.5e-4 flat** | **100 sims**; resign off; **claim_draw on** in search; **value_target=root_q** (per-ply MCTS Q); Gumbel c_scale 0.1 + root-Q fixes; encoding vectorized |
+| **241** | **128** | **800** | **128** | **2**/4 | **200k** | **128 games** (Elo CI) | **2.5e-4 flat** | same as 161 + **move_temperature=4.0** for first **10** plies (sampling only); log `metrics_first_moves.csv` |
 
-**Current row:** start **161** (from iter **160** checkpoint) — 100 sims self-play + gate, resign off, claim_draw on in search, **value_target=root_q**, 128-game Elo-CI gate, 200k replay, 2.5e-4 flat LR. Resume from `latest.pt` (= `ckpt_iter_0160.pt`). Do **not** use `--reset-optimizer`.
+**Current row:** start **241** — same as root_q recipe plus early-ply move temperature **T=4 / 10 plies** (policy targets untempered; gates unchanged). Resume from `latest.pt`. Do **not** use `--reset-optimizer`.
 
 Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net only with a new `--checkpoint-dir`.
 
@@ -104,11 +105,17 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 - Gate logging uses **Elo 95% CI verdict** (PASS if lower bound > 0, FAIL if upper bound < 0, else INCONCLUSIVE) — no H₀/H₁ LLR columns in `metrics_gates.csv`.
 - **Resignation off**; workers 2; 200k replay; 2.5e-4 flat LR; 100 sims.
 
-### Iter 161 — value_target=root_q (current)
+### Iter 161 — value_target=root_q
 
 - **One change** vs claim_draw-restored recipe: self-play value labels use per-ply **`searched_root_q`** (`--value-target root_q`) instead of terminal game outcome (±1 / −draw_penalty).
 - Policy targets unchanged (Gumbel improved policy). Search still uses `draw_contempt = draw_penalty` and `claim_draw=True`. Gates unchanged (WDL outcomes).
 - Wired in `colab/train.ipynb` and `lightning-ai/run_train.py` TRAIN dicts.
 - Abort watch: `value_std` should rise or stay high (not collapse toward 0); threefold count must stay ~2/128; do not trust train loss alone.
 
-Last updated: 2026-07-11.
+### Iter 241 — move temperature (current)
+
+- Same recipe as root_q row, plus early-ply **move sampling temperature T=4 for first 10 plies** (`--move-temperature 4 --move-temperature-plies 10`).
+- Sampling only during exploration plies; stored policy targets stay untempered. Gate exploration / gate temperature unchanged.
+- Each self-play iter appends `metrics_first_moves.csv` (`iter,n,entropy,d3_share,a4_share,main_share,top1_uci,top1_share`) and prints a one-liner.
+
+Last updated: 2026-07-15.

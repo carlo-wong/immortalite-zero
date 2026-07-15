@@ -53,6 +53,9 @@ TRAIN = {
     "lr_total_iters": 10_000,
     "lr_warmup_iters": 0,
     "grad_clip": 10.0,
+    # Early-ply move sampling temperature (policy targets stay untempered).
+    "move_temperature": 4.0,
+    "move_temperature_plies": 10,
 }
 RESET_OPTIMIZER = False
 RESIGN_THRESHOLD = -0.90
@@ -125,6 +128,8 @@ def main() -> None:
         "--lr-total-iters", str(TRAIN["lr_total_iters"]),
         "--lr-warmup-iters", str(TRAIN["lr_warmup_iters"]),
         "--grad-clip", str(TRAIN["grad_clip"]),
+        "--move-temperature", str(TRAIN["move_temperature"]),
+        "--move-temperature-plies", str(TRAIN["move_temperature_plies"]),
         "--checkpoint-dir", paths.ckpt_dir,
         *resume_args,
     ]

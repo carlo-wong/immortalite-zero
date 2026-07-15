@@ -84,6 +84,23 @@ def _tablebase_adjudication(board: chess.Board, tablebase: Any | None, max_piece
     return None, None
 
 
+def tempered_policy(probs: np.ndarray, temperature: float) -> np.ndarray:
+    """Return p ∝ probs^(1/T), renormalized. For move sampling only — not stored targets."""
+    p = np.asarray(probs, dtype=np.float64)
+    total = float(p.sum())
+    if total <= 0.0:
+        raise ValueError("probs must sum to a positive value")
+    p = p / total
+    t = float(temperature)
+    if abs(t - 1.0) <= 1e-12:
+        return p
+    logits = np.log(np.clip(p, 1e-12, None)) / t
+    logits -= logits.max()
+    out = np.exp(logits)
+    out /= out.sum()
+    return out
+
+
 def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
                   exploration_moves: int = _EXPLORATION_MOVES,
                   tablebase: Any | None = None,
@@ -159,7 +176,13 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
                 break
 
         if move_count < exploration_moves:
-            choice = np.random.choice(len(result.moves), p=improved / improved.sum())
+            probs = improved.astype(np.float64)
+            probs = probs / probs.sum()
+            T = float(cfg.train.move_temperature)
+            temp_plies = int(cfg.train.move_temperature_plies)
+            if temp_plies > 0 and move_count < temp_plies and abs(T - 1.0) > 1e-12:
+                probs = tempered_policy(probs, T)
+            choice = np.random.choice(len(result.moves), p=probs)
             move = result.moves[choice]
         else:
             move = result.best_move()
@@ -328,6 +351,8 @@ def _config_to_dict(cfg: Config) -> dict:
             "sims_per_move": cfg.train.sims_per_move,
             "checkpoint_dir": cfg.train.checkpoint_dir,
             "grad_clip_norm": cfg.train.grad_clip_norm,
+            "move_temperature": cfg.train.move_temperature,
+            "move_temperature_plies": cfg.train.move_temperature_plies,
         },
     }
 

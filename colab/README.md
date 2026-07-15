@@ -39,11 +39,13 @@ Or: [colab.research.google.com](https://colab.research.google.com) → **File �
 
 ## Step 4 — Current `TRAIN` defaults (cell 6)
 
-Bug-fix restart at iter **161** from `ckpt_iter_0160` — same as `lightning-ai/run_train.py`. See `TRAINING_CHANGELOG.md`.
+Current recipe: iter **241** — same as `lightning-ai/run_train.py` except workers **2** (Colab) vs **4** (Lightning). See `TRAINING_CHANGELOG.md`.
 
 | Key | Value | Notes |
 |-----|-------|-------|
 | `sims` | **100** | flat MCTS sims/move |
+| `move_temperature` / `move_temperature_plies` | **4.0** / **10** | early-ply sampling only; targets untempered |
+| `value_target` | **root_q** | per-ply MCTS root Q labels |
 | `games` | 128 | full GPU batch width (`concurrency` matches) |
 | `train_steps` | 800 | ~6× sample reuse at 128 games |
 | `concurrency` | 128 | batched MCTS eval width (one GPU owner) |
@@ -58,7 +60,7 @@ Bug-fix restart at iter **161** from `ckpt_iter_0160` — same as `lightning-ai/
 | `save_every` | 10 | numbered snapshots |
 | `resume` | True | loads `latest.pt` automatically |
 
-Training auto-stops after completing an iter that is a multiple of **20** (160, 180, 200, …). Re-run cell 6 for the next span. No in-loop auto-gate.
+Training auto-stops after completing an iter that is a multiple of **20** (240, 260, …). Re-run cell 6 for the next span. No in-loop auto-gate.
 
 ## Step 5 — What good looks like
 

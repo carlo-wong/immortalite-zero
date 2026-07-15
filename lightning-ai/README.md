@@ -58,7 +58,7 @@ Writes `latest.pt`, `metrics.csv`, shards every iteration to `../results/`. Trai
 
 ### Current `TRAIN` defaults
 
-Same recipe as Colab except `selfplay_workers=4` (Lightning T4 has 4 vCPUs; Colab is 2). Bug-fix restart at iter **161** from `ckpt_iter_0160`. See `colab/README.md` and `TRAINING_CHANGELOG.md`.
+Same recipe as Colab except `selfplay_workers=4` / `gate_workers=4` (Lightning T4 has 4 vCPUs; Colab is 2). Current row: iter **241** (`move_temperature=4` / 10 plies). See `colab/README.md` and `TRAINING_CHANGELOG.md`.
 
 | Key | Value |
 |-----|-------|
@@ -67,12 +67,14 @@ Same recipe as Colab except `selfplay_workers=4` (Lightning T4 has 4 vCPUs; Cola
 | `train_steps` | 800 |
 | `concurrency` | 128 |
 | `selfplay_workers` / `gate_workers` | 4 / 4 |
+| `value_target` | `root_q` |
+| `move_temperature` / `move_temperature_plies` | **4.0** / **10** (sampling only) |
 | `resign` | off |
 | `replay_buffer` / `replay_window` | 200k |
 | `gate_games` / `gate_sims` | 128 / 100 (manual gate only) |
 | `gate_exploration_moves` / `gate_openings` | 0 / masters (64×2 colors) |
 | `lr` / `lr_min` | 2.5e-4 flat |
-| Training span | auto-stops at iters 160, 180, … (multiples of 20) |
+| Training span | auto-stops at iters 240, 260, … (multiples of 20) |
 | `RESET_OPTIMIZER` | `False` |
 
 ## Step 3 — Manual gate

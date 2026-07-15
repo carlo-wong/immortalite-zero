@@ -75,6 +75,9 @@ class TrainConfig:
     sims_per_move: int = 100        # fixed MCTS sims/move (no ramp)
     checkpoint_dir: str = "checkpoints"
     grad_clip_norm: float = 10.0
+    # Early-ply move-selection temperature (sampling only; stored targets stay untempered).
+    move_temperature: float = 1.0       # 1.0 = no tempering
+    move_temperature_plies: int = 0     # 0 = disabled; apply T while move_count < this
 
 
 @dataclass
