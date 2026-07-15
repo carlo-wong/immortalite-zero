@@ -88,6 +88,7 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
                   exploration_moves: int = _EXPLORATION_MOVES,
                   tablebase: Any | None = None,
                   source_iter: int = 0,
+                  start_moves: list[str] | None = None,
                   ) -> Generator[EvalRequest, tuple[np.ndarray, float], GameResult]:
     board = chess.Board()
     mcts = MCTS(None, cfg.mcts)
@@ -100,6 +101,15 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
     tablebase_draw = False
     low_value_streak = {chess.WHITE: 0, chess.BLACK: 0}
     last_root_value = 0.0
+
+    if start_moves:
+        for uci in start_moves:
+            move = chess.Move.from_uci(uci)
+            if move not in board.legal_moves:
+                raise ValueError(f"illegal start move {uci!r} in position {board.fen()}")
+            board.push(move)
+            moves.append(uci)
+            move_count += 1
 
     while not board.is_game_over(claim_draw=True) and move_count < cfg.train.max_game_moves:
         tb_termination, tb_winner = _tablebase_adjudication(board, tablebase, cfg.train.tb_max_pieces)
@@ -537,7 +547,10 @@ def _run_match_games(
     *,
     start_game_index: int = 0,
     on_game_finished: Callable[[], None] | None = None,
+    openings: list[list[str]] | None = None,
 ) -> _MatchChunkStats:
+    from engine.openings import opening_for_game
+
     stats = _MatchChunkStats()
     concurrency = max(1, min(n_games, match_cfg.train.selfplay_concurrency))
     active: list[tuple[object, EvalRequest, bool, int]] = []
@@ -553,6 +566,7 @@ def _run_match_games(
                 add_noise=False,
                 exploration_moves=exploration_moves,
                 tablebase=tablebase,
+                start_moves=opening_for_game(openings, game_idx),
             )
             active.append((gen, next(gen), a_is_white, game_idx))
             launched += 1
@@ -611,6 +625,7 @@ def _match_worker(payload: dict) -> dict[str, Any]:
     syzygy_path = payload.get("syzygy_path")
     exploration_moves = int(payload["exploration_moves"])
     seed = int(payload["seed"])
+    openings = payload.get("openings")
 
     torch.set_num_threads(1)
     random.seed(seed)
@@ -652,6 +667,7 @@ def _match_worker(payload: dict) -> dict[str, Any]:
             tablebase,
             start_game_index=start_game_index,
             on_game_finished=_on_game,
+            openings=openings,
         )
         return {
             "score": stats.score,
@@ -683,6 +699,7 @@ def play_match_parallel(
     exploration_moves: int,
     syzygy_path: str | None = None,
     on_progress: Callable[[int], None] | None = None,
+    openings: list[list[str]] | None = None,
 ) -> _MatchChunkStats:
     if n_games <= 0:
         return _MatchChunkStats()
@@ -720,6 +737,7 @@ def play_match_parallel(
             "syzygy_path": syzygy_path,
             "exploration_moves": exploration_moves,
             "seed": seed,
+            "openings": openings,
         })
         start_index += n_worker_games
 

@@ -70,6 +70,7 @@ Same recipe as Colab except `selfplay_workers=4` (Lightning T4 has 4 vCPUs; Cola
 | `resign` | off |
 | `replay_buffer` / `replay_window` | 200k |
 | `gate_games` / `gate_sims` | 128 / 100 (manual gate only) |
+| `gate_exploration_moves` / `gate_openings` | 0 / masters (64×2 colors) |
 | `lr` / `lr_min` | 2.5e-4 flat |
 | Training span | auto-stops at iters 160, 180, … (multiples of 20) |
 | `RESET_OPTIMIZER` | `False` |

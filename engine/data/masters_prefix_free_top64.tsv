@@ -1,0 +1,65 @@
+﻿rank	games	eco	name	pgn
+1	186449	B50	Sicilian Defense	1. e4 c5 2. Nf3 d6 3. d4
+2	162034	C60	Ruy Lopez	1. e4 e5 2. Nf3 Nc6 3. Bb5
+3	151117	E10	Indian Defense: Anti-Nimzo-Indian	1. d4 Nf6 2. c4 e6 3. Nf3
+4	122101	E61	King's Indian Defense	1. d4 Nf6 2. c4 g6 3. Nc3
+5	103907	A50	Indian Defense: Normal Variation	1. d4 Nf6 2. c4 e6 3. Nc3
+6	83197	B40	Sicilian Defense: French Variation	1. e4 c5 2. Nf3 e6 3. d4
+7	78187	B32	Sicilian Defense: Open	1. e4 c5 2. Nf3 Nc6 3. d4
+8	75421	D11	Slav Defense: Modern Line	1. d4 d5 2. c4 c6 3. Nf3
+9	73783	D02	Queen's Pawn Game: Zukertort Variation	1. d4 d5 2. Nf3
+10	71339	C10	French Defense: Paulsen Variation	1. e4 e6 2. d4 d5 3. Nc3
+11	55233	D43	Semi-Slav Defense	1. c4 e6 2. Nf3 Nf6 3. d4 d5 4. Nc3 c6
+12	54756	A48	East Indian Defense	1. d4 Nf6 2. Nf3 g6
+13	53405	A46	Indian Defense: Knights Variation	1. d4 Nf6 2. Nf3 e6
+14	52051	D31	Queen's Gambit Declined: Queen's Knight Variation	1. d4 d5 2. c4 e6 3. Nc3
+15	51545	D02	Queen's Pawn Game: Symmetrical Variation	1. d4 Nf6 2. Nf3 d5 3. c4
+16	48726	C50	Italian Game	1. e4 e5 2. Nf3 Nc6 3. Bc4
+17	43739	C03	French Defense: Tarrasch Variation	1. e4 e6 2. d4 d5 3. Nd2
+18	42083	E10	Indian Defense: Anti-Nimzo-Indian	1. c4 e6 2. Nf3 Nf6 3. d4 d5 4. g3
+19	39358	B00	Pirc Defense	1. e4 d6 2. d4 Nf6 3. Nc3
+20	38641	B30	Sicilian Defense: Nyezhmetdinov-Rossolimo Attack	1. e4 c5 2. Nf3 Nc6 3. Bb5
+21	38245	D30	Queen's Gambit Declined	1. d4 d5 2. c4 e6 3. Nf3
+22	37872	E60	King's Indian Defense: Normal Variation, King's Knight Variation	1. d4 Nf6 2. c4 g6 3. Nf3
+23	37683	A07	King's Indian Attack	1. Nf3 d5 2. g3
+24	34354	A56	Benoni Defense	1. d4 Nf6 2. c4 c5 3. d5
+25	33422	B12	Caro-Kann Defense: Advance Variation	1. e4 c6 2. d4 d5 3. e5
+26	31160	A21	English Opening: King's English Variation, Reversed Sicilian	1. c4 e5 2. Nc3
+27	30916	E00	Catalan Opening	1. d4 Nf6 2. c4 e6 3. g3
+28	30660	A30	English Opening: Symmetrical Variation	1. Nf3 c5 2. c4
+29	28424	B51	Sicilian Defense: Moscow Variation	1. e4 c5 2. Nf3 d6 3. Bb5+
+30	28398	A80	Dutch Defense	1. d4 f5
+31	28253	A40	Horwitz Defense	1. d4 e6 2. c4
+32	28092	D37	Queen's Gambit Declined: Three Knights Variation	1. c4 e6 2. Nf3 Nf6 3. d4 d5 4. Nc3 Be7
+33	26229	B23	Sicilian Defense: Closed, Traditional	1. e4 c5 2. Nc3 Nc6
+34	25900	A05	King's Indian Attack	1. Nf3 Nf6 2. g3 d5 3. Bg2
+35	25255	D10	Slav Defense	1. d4 d5 2. c4 c6 3. Nc3
+36	24591	A40	Queen's Pawn Game: Modern Defense	1. d4 g6
+37	24225	D20	Queen's Gambit Accepted	1. d4 d5 2. c4 dxc4
+38	24140	B06	Modern Defense: Standard Line	1. e4 g6 2. d4 Bg7 3. Nc3
+39	23310	C42	Petrov's Defense	1. e4 e5 2. Nf3 Nf6 3. Nxe5
+40	23278	A45	Trompowsky Attack	1. d4 Nf6 2. Bg5
+41	23239	E11	Bogo-Indian Defense	1. c4 e6 2. Nf3 Nf6 3. d4 Bb4+
+42	22456	C44	Scotch Game	1. e4 e5 2. Nf3 Nc6 3. d4
+43	22207	A30	English Opening: Symmetrical Variation	1. c4 c5
+44	21671	E15	Queen's Indian Defense: Fianchetto Variation, Nimzowitsch Variation	1. c4 e6 2. Nf3 Nf6 3. d4 b6 4. g3 Ba6
+45	20520	B15	Caro-Kann Defense	1. e4 c6 2. d4 d5 3. Nc3
+46	20366	A00	Hungarian Opening	1. g3
+47	19833	A34	English Opening: Symmetrical Variation, Three Knights Variation	1. Nf3 Nf6 2. c4 c5 3. Nc3
+48	19091	A15	English Opening: Anglo-Indian Defense, King's Indian Formation	1. Nf3 Nf6 2. c4 g6 3. Nc3
+49	18322	A15	English Opening: Anglo-Indian Defense, King's Knight Variation	1. Nf3 Nf6 2. c4 e6 3. g3
+50	18247	D38	Queen's Gambit Declined: Ragozin Defense	1. c4 e6 2. Nf3 Nf6 3. d4 d5 4. Nc3 Bb4
+51	17905	A20	English Opening: King's English Variation	1. c4 e5 2. g3
+52	17561	A22	English Opening: King's English Variation, Two Knights Variation	1. c4 Nf6 2. Nc3 e5 3. Nf3
+53	17535	A09	Reti Opening	1. Nf3 d5 2. c4
+54	17076	A41	Queen's Pawn Game	1. d4 d6 2. Nf3
+55	16786	B13	Caro-Kann Defense: Exchange Variation	1. e4 c6 2. d4 d5 3. exd5
+56	16634	B22	Sicilian Defense: Alapin Variation	1. e4 c5 2. c3 Nf6 3. e5
+57	16336	B30	Sicilian Defense: Old Sicilian	1. e4 c5 2. Nf3 Nc6 3. Nc3
+58	16006	A11	English Opening: Caro-Kann Defensive System	1. c4 c6
+59	15866	C02	French Defense: Advance Variation	1. e4 e6 2. d4 d5 3. e5
+60	15395	A05	King's Indian Attack: Symmetrical Defense	1. Nf3 Nf6 2. g3 g6
+61	15290	A10	English Opening: Great Snake Variation	1. c4 g6
+62	15150	B03	Alekhine Defense	1. e4 Nf6 2. e5 Nd5 3. d4
+63	15038	B01	Scandinavian Defense: Mieses-Kotroc Variation	1. e4 d5 2. exd5 Qxd5 3. Nc3
+64	14600	C46	Three Knights Opening	1. e4 e5 2. Nf3 Nc6 3. Nc3

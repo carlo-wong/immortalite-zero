@@ -20,7 +20,9 @@ GATE_GAMES = 128
 GATE_SIMS = 100
 GATE_WORKERS = 4
 GATE_CONCURRENCY = 128
-GATE_EXPLORATION_MOVES = 20
+# Masters book forces starts; no temperature after book (matches Colab TRAIN).
+GATE_EXPLORATION_MOVES = 0
+GATE_OPENINGS = "masters"  # "masters" | "none" | path to TSV
 DRAW_PENALTY = 1 / 3
 
 
@@ -54,9 +56,17 @@ def main() -> None:
     from engine.encoding import ENCODING_VERSION
     from engine.network import ChessNet
     from engine.sprt import ALPHA, BETA, ELO0, ELO1, sprt_verdict_label
+    from engine.openings import load_default_gate_openings, load_opening_book
     from engine.train import _load_matching_state_dict, _log_gate_metrics, play_match
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    openings_spec = str(GATE_OPENINGS or "none").strip()
+    if openings_spec.lower() in {"", "none", "off"}:
+        gate_openings = None
+    elif openings_spec.lower() == "masters":
+        gate_openings = load_default_gate_openings()
+    else:
+        gate_openings = load_opening_book(openings_spec)
     cfg = Config()
     cfg.train.draw_penalty = DRAW_PENALTY
     cfg.train.syzygy_path = paths.tb_dir
@@ -88,9 +98,15 @@ def main() -> None:
     net_a, state_a = load_gate_net(path_a)
     print(f"Loading B ({label_b}): {path_b}")
     net_b, state_b = load_gate_net(path_b)
+    book_note = (
+        f", book={openings_spec} ({len(gate_openings)} lines × 2 colors)"
+        if gate_openings
+        else ", book=none"
+    )
     print(
         f"\nMatch: {label_a} vs {label_b} "
         f"(SPRT cap {GATE_GAMES} games, {GATE_SIMS} sims, workers={GATE_WORKERS}, "
+        f"exploration={GATE_EXPLORATION_MOVES}{book_note}, "
         f"elo0={ELO0}, elo1={ELO1})..."
     )
 
@@ -108,6 +124,7 @@ def main() -> None:
         sprt_beta=BETA,
         workers=GATE_WORKERS,
         concurrency=GATE_CONCURRENCY,
+        openings=gate_openings,
     )
     tablebase.close()
 

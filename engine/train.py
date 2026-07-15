@@ -436,10 +436,17 @@ def _log_gate_metrics(ckpt_dir: str, it: int, prev_it: int, metrics: dict, games
                     f"{row['opening_uci']},{row['result']},{row['termination']},"
                     f"{row['plies']}\n"
                 )
-    print(_opening_summary(openings), flush=True)
+    book_lines = metrics.get("book_lines")
+    print(
+        _opening_summary(
+            openings,
+            book_lines=int(book_lines) if book_lines is not None else None,
+        ),
+        flush=True,
+    )
 
 
-def _opening_summary(openings: list[dict]) -> str:
+def _opening_summary(openings: list[dict], *, book_lines: int | None = None) -> str:
     if not openings:
         return "gate openings: none"
     prefixes = [str(o.get("opening_uci", "")) for o in openings]
@@ -451,10 +458,11 @@ def _opening_summary(openings: list[dict]) -> str:
         (p.split()[0] if p else "") for p in prefixes
     )
     first_hist = ",".join(f"{m}:{c}" for m, c in first_moves.most_common())
+    book_note = f" book_lines={book_lines}" if book_lines is not None else ""
     return (
         f"gate openings: n={len(openings)} unique={unique} "
         f"top_share={top_share:.2f} top={top_prefix!r} "
-        f"first=[{first_hist}] (plies={GATE_OPENING_PLIES})"
+        f"first=[{first_hist}] (plies={GATE_OPENING_PLIES}){book_note}"
     )
 
 
@@ -486,6 +494,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
                workers: int = 1,
                on_progress: Callable[[int], None] | None = None,
                concurrency: int | None = None,
+               openings: list[list[str]] | None = None,
                ) -> dict:
     if n_games <= 0:
         return {
@@ -506,6 +515,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             "elo0": sprt_elo0,
             "elo1": sprt_elo1,
             "openings": [],
+            "book_lines": len(openings) if openings else None,
         }
 
     match_cfg = deepcopy(cfg)
@@ -552,6 +562,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             exploration_moves,
             syzygy_path=match_cfg.train.syzygy_path,
             on_progress=_gate_progress,
+            openings=openings,
         )
         _tqdm_sync_progress(gate_bar, n_games)
         gate_bar.close()
@@ -602,6 +613,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             "elo0": sprt_elo0 if sprt else float("nan"),
             "elo1": sprt_elo1 if sprt else float("nan"),
             "openings": list(merged.openings or []),
+            "book_lines": len(openings) if openings else None,
         }
 
     eval_a = NetEvaluator(net_a, device=device)
@@ -615,14 +627,14 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     draws_b = 0
     game_lengths = []
     termination_counts: Counter[str] = Counter()
-    openings: list[dict] = []
+    opening_rows: list[dict] = []
 
     def _record_game_result(game: GameResult, a_is_white: bool, game_idx: int) -> None:
         nonlocal score, wins_w, wins_b, losses_w, losses_b, draws_w, draws_b
         winner = _winner_of(game)
         game_lengths.append(len(game.samples))
         termination_counts[game.termination] += 1
-        openings.append(_opening_row(game_idx, a_is_white, game, winner))
+        opening_rows.append(_opening_row(game_idx, a_is_white, game, winner))
 
         if winner == 0:
             score += 0.5
@@ -642,6 +654,8 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
             else:
                 losses_b += 1
 
+    from engine.openings import opening_for_game
+
     concurrency = max(1, min(n_games, cfg.train.selfplay_concurrency))
     active: list[tuple[object, EvalRequest, bool, int]] = []
     launched = 0
@@ -660,6 +674,7 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
                 add_noise=False,
                 exploration_moves=exploration_moves,
                 tablebase=tablebase,
+                start_moves=opening_for_game(openings, launched),
             )
             active.append((gen, next(gen), a_is_white, launched))
             launched += 1
@@ -744,7 +759,8 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
         "games_played": games_played,
         "elo0": sprt_elo0 if sprt else float("nan"),
         "elo1": sprt_elo1 if sprt else float("nan"),
-        "openings": openings,
+        "openings": opening_rows,
+        "book_lines": len(openings) if openings else None,
     }
 
 
@@ -906,7 +922,14 @@ def main() -> None:
     parser.add_argument("--gate-sims", type=int, default=None,
                         help="override sims/move for gate matches (defaults to self-play sims)")
     parser.add_argument("--gate-exploration-moves", type=int, default=10,
-                        help="sample moves for first N plies in gate games")
+                        help="sample moves for first N plies in gate games "
+                             "(counts from start, including book plies; use 0 with masters book)")
+    parser.add_argument(
+        "--gate-openings",
+        type=str,
+        default="masters",
+        help="gate opening book: 'masters' (default prefix-free top-64), 'none', or TSV path",
+    )
     parser.add_argument("--gate-anchor-iter", type=int, default=60,
                         help="also gate vs this frozen checkpoint iter (0 = off)")
     parser.add_argument("--gate-anchor-games", type=int, default=30,
@@ -996,6 +1019,15 @@ def main() -> None:
     if args.resign_min_moves is not None:
         cfg.train.resign_min_moves = args.resign_min_moves
     args.gate_exploration_moves = max(0, int(args.gate_exploration_moves))
+    from engine.openings import load_default_gate_openings, load_opening_book
+
+    gate_openings_spec = str(args.gate_openings or "none").strip()
+    if gate_openings_spec.lower() in {"", "none", "off"}:
+        gate_openings: list[list[str]] | None = None
+    elif gate_openings_spec.lower() == "masters":
+        gate_openings = load_default_gate_openings()
+    else:
+        gate_openings = load_opening_book(gate_openings_spec)
     # Keep self-play search contempt aligned with the draw target shaping.
     cfg.mcts.draw_contempt = cfg.train.draw_penalty
     print(
@@ -1019,6 +1051,8 @@ def main() -> None:
         f"gate_games={args.gate_games} "
         f"gate_sims={args.gate_sims if args.gate_sims is not None else 'match-selfplay'} "
         f"gate_exploration_moves={args.gate_exploration_moves} "
+        f"gate_openings={gate_openings_spec}"
+        f"{f'({len(gate_openings)} lines)' if gate_openings else ''} "
         f"gate_anchor_iter={args.gate_anchor_iter} "
         f"quick_eval_games={args.quick_eval_games} "
         f"quick_eval_lag={args.quick_eval_lag}"
@@ -1252,6 +1286,7 @@ def main() -> None:
                                 exploration_moves=args.gate_exploration_moves,
                                 tablebase=tablebase,
                                 sprt=False,
+                                openings=gate_openings,
                             )
                             winrate_quick = float(quick_metrics["winrate"])
                     except Exception as exc:
@@ -1345,6 +1380,7 @@ def main() -> None:
                                     sprt_elo1=ELO1,
                                     sprt_alpha=ALPHA,
                                     sprt_beta=BETA,
+                                    openings=gate_openings,
                                 )
                                 winrate_vs_prev = float(gate_metrics["winrate"])
                                 total_wins = gate_metrics["wins_as_white"] + gate_metrics["wins_as_black"]
@@ -1402,6 +1438,7 @@ def main() -> None:
                                                     sims=gate_sims,
                                                     device=args.device,
                                                     exploration_moves=args.gate_exploration_moves,
+                                                    openings=gate_openings,
                                                     tablebase=tablebase,
                                                     sprt=False,
                                                 )

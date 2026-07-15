@@ -53,7 +53,8 @@ Bug-fix restart at iter **161** from `ckpt_iter_0160` — same as `lightning-ai/
 | `resign` | False | off |
 | `lr` / `lr_min` | **2.5e-4** | flat |
 | `gate_games` / `gate_sims` | **128 / 100** | manual gate cell 7 only |
-| `gate_exploration_moves` | 20 | sample first 20 plies in gates |
+| `gate_exploration_moves` | **0** | after masters book (no temperature) |
+| `gate_openings` | **masters** | 64 prefix-free lines × both colors (=128) |
 | `save_every` | 10 | numbered snapshots |
 | `resume` | True | loads `latest.pt` automatically |
 
