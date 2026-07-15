@@ -53,8 +53,8 @@ def main() -> None:
     from engine.config import Config, NetConfig
     from engine.encoding import ENCODING_VERSION
     from engine.network import ChessNet
-    from engine.sprt import ALPHA, BETA, ELO0, ELO1
-    from engine.train import _elo_ci_verdict, _load_matching_state_dict, _log_gate_metrics, play_match
+    from engine.sprt import ALPHA, BETA, ELO0, ELO1, sprt_verdict_label
+    from engine.train import _load_matching_state_dict, _log_gate_metrics, play_match
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     cfg = Config()
@@ -120,24 +120,17 @@ def main() -> None:
     losses = metrics["losses_as_white"] + metrics["losses_as_black"]
     draws = metrics["draws_as_white"] + metrics["draws_as_black"]
     wdl = f"+{wins} ={draws} -{losses}"
-    ci_verdict = _elo_ci_verdict(float(metrics["elo_lower"]), float(metrics["elo_upper"]))
-    games_played = int(metrics["games_played"])
 
     print("\n" + "=" * 40)
     print("MATCH COMPLETED")
-    print(f"{label_a} score vs {label_b}: {winrate:.3f} [{wdl}] ({games_played} games)")
-    print(f"  As White: W {metrics['wins_as_white']} L {metrics['losses_as_white']} D {metrics['draws_as_white']}")
-    print(f"  As Black: W {metrics['wins_as_black']} L {metrics['losses_as_black']} D {metrics['draws_as_black']}")
-    print(f"  Mean game length: {metrics['mean_game_len']:.1f} plies")
+    print(f"{label_a} score vs {label_b}: {winrate:.3f} [{wdl}] ({metrics['games_played']} games)")
+    print(f"  As White: Wins: {metrics['wins_as_white']}, Losses: {metrics['losses_as_white']}, Draws: {metrics['draws_as_white']}")
+    print(f"  As Black: Wins: {metrics['wins_as_black']}, Losses: {metrics['losses_as_black']}, Draws: {metrics['draws_as_black']}")
+    print(f"  Mean Game Length: {metrics['mean_game_len']:.1f} plies")
     print(f"  Terminations: {metrics['terminations']}")
-    print(
-        f"  Verdict: {ci_verdict} "
-        f"Elo {metrics['elo']:+.1f} "
-        f"[95% CI {metrics['elo_lower']:+.1f}, {metrics['elo_upper']:+.1f}] "
-        f"LOS {metrics['los'] * 100:.1f}%"
-    )
+    print(f"  SPRT: {sprt_verdict_label(metrics['sprt_decision'])} (llr={metrics['llr']:.2f}, games={metrics['games_played']})")
     print(f"  Logged to: {os.path.join(paths.ckpt_dir, 'metrics_gates.csv')}")
-    print(f"Result: {label_a} {ci_verdict} vs {label_b}")
+    print(f"Result: {label_a} {sprt_verdict_label(metrics['sprt_decision'])} vs {label_b}")
     print("=" * 40)
 
 
