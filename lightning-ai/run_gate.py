@@ -4,12 +4,15 @@
 Edit CHECKPOINT_A / CHECKPOINT_B below, then run from the terminal:
   cd immortalite-zero
   python lightning-ai/run_gate.py
+
+Or call ``run_gate_match`` from ``run_train_and_gate.py``.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 
 # --- edit checkpoints and match settings here (matches run_train.py gate_* defaults) ---
 # Use an int (iteration number) or the string "latest".
@@ -39,9 +42,22 @@ def _checkpoint_iteration(checkpoint_ref: int | str, state: dict) -> int:
     return int(checkpoint_ref)
 
 
-def main() -> None:
+def run_gate_match(
+    checkpoint_a: int | str,
+    checkpoint_b: int | str,
+    *,
+    gate_games: int = GATE_GAMES,
+    gate_sims: int = GATE_SIMS,
+    gate_workers: int = GATE_WORKERS,
+    gate_concurrency: int = GATE_CONCURRENCY,
+    gate_exploration_moves: int = GATE_EXPLORATION_MOVES,
+    gate_openings: str = GATE_OPENINGS,
+    draw_penalty: float = DRAW_PENALTY,
+) -> dict[str, Any]:
+    """Run A vs B gate and append to metrics_gates.csv. Returns play_match metrics."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    sys.path.insert(0, script_dir)
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
     from paths import resolve_paths, validate_syzygy
 
     paths = resolve_paths()
@@ -60,21 +76,21 @@ def main() -> None:
     from engine.train import _load_matching_state_dict, _log_gate_metrics, play_match
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    openings_spec = str(GATE_OPENINGS or "none").strip()
+    openings_spec = str(gate_openings or "none").strip()
     if openings_spec.lower() in {"", "none", "off"}:
-        gate_openings = None
+        openings = None
     elif openings_spec.lower() == "masters":
-        gate_openings = load_default_gate_openings()
+        openings = load_default_gate_openings()
     else:
-        gate_openings = load_opening_book(openings_spec)
+        openings = load_opening_book(openings_spec)
     cfg = Config()
-    cfg.train.draw_penalty = DRAW_PENALTY
+    cfg.train.draw_penalty = draw_penalty
     cfg.train.syzygy_path = paths.tb_dir
     cfg.train.checkpoint_dir = paths.ckpt_dir
     tablebase = chess.syzygy.open_tablebase(paths.tb_dir)
 
-    path_a, label_a = _resolve_checkpoint(paths.ckpt_dir, CHECKPOINT_A)
-    path_b, label_b = _resolve_checkpoint(paths.ckpt_dir, CHECKPOINT_B)
+    path_a, label_a = _resolve_checkpoint(paths.ckpt_dir, checkpoint_a)
+    path_b, label_b = _resolve_checkpoint(paths.ckpt_dir, checkpoint_b)
     if not os.path.exists(path_a) or not os.path.exists(path_b):
         raise FileNotFoundError(
             f"Missing checkpoint(s):\n  A ({label_a}): {path_a}\n  B ({label_b}): {path_b}"
@@ -99,38 +115,38 @@ def main() -> None:
     print(f"Loading B ({label_b}): {path_b}")
     net_b, state_b = load_gate_net(path_b)
     book_note = (
-        f", book={openings_spec} ({len(gate_openings)} lines × 2 colors)"
-        if gate_openings
+        f", book={openings_spec} ({len(openings)} lines × 2 colors)"
+        if openings
         else ", book=none"
     )
     print(
         f"\nMatch: {label_a} vs {label_b} "
-        f"(SPRT cap {GATE_GAMES} games, {GATE_SIMS} sims, workers={GATE_WORKERS}, "
-        f"exploration={GATE_EXPLORATION_MOVES}{book_note}, "
+        f"(SPRT cap {gate_games} games, {gate_sims} sims, workers={gate_workers}, "
+        f"exploration={gate_exploration_moves}{book_note}, "
         f"elo0={ELO0}, elo1={ELO1})..."
     )
 
     metrics = play_match(
         net_a, net_b, cfg,
-        n_games=GATE_GAMES,
-        sims=GATE_SIMS,
+        n_games=gate_games,
+        sims=gate_sims,
         device=device,
-        exploration_moves=GATE_EXPLORATION_MOVES,
+        exploration_moves=gate_exploration_moves,
         tablebase=tablebase,
         sprt=True,
         sprt_elo0=ELO0,
         sprt_elo1=ELO1,
         sprt_alpha=ALPHA,
         sprt_beta=BETA,
-        workers=GATE_WORKERS,
-        concurrency=GATE_CONCURRENCY,
-        openings=gate_openings,
+        workers=gate_workers,
+        concurrency=gate_concurrency,
+        openings=openings,
     )
     tablebase.close()
 
-    iter_a = _checkpoint_iteration(CHECKPOINT_A, state_a)
-    iter_b = _checkpoint_iteration(CHECKPOINT_B, state_b)
-    _log_gate_metrics(paths.ckpt_dir, iter_a, iter_b, metrics, GATE_GAMES)
+    iter_a = _checkpoint_iteration(checkpoint_a, state_a)
+    iter_b = _checkpoint_iteration(checkpoint_b, state_b)
+    _log_gate_metrics(paths.ckpt_dir, iter_a, iter_b, metrics, gate_games)
 
     winrate = metrics["winrate"]
     wins = metrics["wins_as_white"] + metrics["wins_as_black"]
@@ -149,6 +165,11 @@ def main() -> None:
     print(f"  Logged to: {os.path.join(paths.ckpt_dir, 'metrics_gates.csv')}")
     print(f"Result: {label_a} {sprt_verdict_label(metrics['sprt_decision'])} vs {label_b}")
     print("=" * 40)
+    return metrics
+
+
+def main() -> None:
+    run_gate_match(CHECKPOINT_A, CHECKPOINT_B)
 
 
 if __name__ == "__main__":

@@ -107,6 +107,29 @@ class SearchResult:
             node = node.children[idx]
         return pv
 
+    def principal_variation_from(self, first: chess.Move, max_len: int = 8) -> list[chess.Move]:
+        """PV starting with ``first``, then following max-N children (like ``principal_variation``)."""
+        if max_len < 1:
+            return []
+        board = self._board.copy()
+        idx = move_to_index(first, board)
+        if idx not in self._root.children:
+            return [first]
+        pv: list[chess.Move] = [first]
+        board.push(first)
+        node = self._root.children[idx]
+        for _ in range(max_len - 1):
+            if not node.children:
+                break
+            child_idx = max(node.children, key=lambda i: node.children[i].N)
+            move = index_to_move(child_idx, board)
+            if move is None:
+                break
+            pv.append(move)
+            board.push(move)
+            node = node.children[child_idx]
+        return pv
+
 
 class MCTS:
     def __init__(self, evaluator: NetEvaluator | None, cfg: MCTSConfig | None = None):

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Self-play training for Lightning AI (terminal / nohup).
+"""Train to the next multiple of 20, then gate vs the checkpoint 20 iters ago.
 
-Runs in the terminal so training continues after you close the browser.
-Sibling-folder layout: ../results and ../syzygy345.
+Combines ``run_train.py`` + ``run_gate.py`` in one terminal job.
 
-Example (background, survives browser close):
+Example (latest at iter 260):
+  train iters 261..280, then gate ckpt 280 vs 260.
+
   cd immortalite-zero
-  nohup python lightning-ai/run_train.py > ../results/train.log 2>&1 &
-  tail -f ../results/train.log
+  nohup python lightning-ai/run_train_and_gate.py > ../results/train_and_gate.log 2>&1 &
+  tail -f ../results/train_and_gate.log
+
+Uses the same TRAIN dict / STOP_INTERVAL as ``run_train.py``.
+Gate uses TRAIN gate_* knobs and ``gate_sims`` (not self-play ``sims``).
 """
 
 from __future__ import annotations
@@ -23,57 +27,16 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 from paths import ensure_ckpt_dir, resolve_paths, validate_syzygy
-
-# --- edit training settings here ---
-STOP_INTERVAL = 20  # stop after completing iters 160, 180, 200, …
-
-TRAIN = {
-    "sims": 150,  # self-play; iter 261+ (gate stays 100)
-    "gate_sims": 100,  # manual gate (run_gate.py / run_train_and_gate.py) only
-    "games": 128,
-    "train_steps": 800,
-    "concurrency": 128,
-    "selfplay_workers": 4,  # Lightning T4 has 4 vCPUs; Colab bench was 2-vCPU only
-    "replay_buffer": 200_000,
-    "replay_window": 200_000,
-    "draw_penalty": 1 / 3,
-    # Per-ply MCTS root Q value labels (option B); gates still use WDL outcomes.
-    "value_target": "root_q",
-    "gate_games": 128,
-    "gate_workers": 4,
-    "gate_concurrency": 128,
-    # Masters book (64 lines × 2 colors); 0 temperature after forced start.
-    "gate_exploration_moves": 0,
-    "gate_openings": "masters",
-    "save_every": 10,
-    "resume": True,
-    "resign": False,
-    "lr": 2.5e-4,
-    "lr_min": 2.5e-4,
-    "lr_total_iters": 10_000,
-    "lr_warmup_iters": 0,
-    "grad_clip": 10.0,
-    # Early-ply move sampling temperature (policy targets stay untempered).
-    "move_temperature": 4.0,
-    "move_temperature_plies": 10,
-}
-RESET_OPTIMIZER = False
-RESIGN_THRESHOLD = -0.90
-RESIGN_PLIES = 3
-RESIGN_MIN_MOVES = 20
-
-
-def _training_span(resume_path: str, resume: bool, stop_interval: int) -> tuple[int, int, int]:
-    """Return (start_iter, end_iter, num_iterations). Stops after completing end_iter."""
-    start_iter = 0
-    if resume and os.path.exists(resume_path):
-        state = torch.load(resume_path, map_location="cpu")
-        start_iter = int(state.get("iteration", -1)) + 1
-    if start_iter % stop_interval == 0:
-        end_iter = start_iter
-    else:
-        end_iter = ((start_iter // stop_interval) + 1) * stop_interval
-    return start_iter, end_iter, end_iter - start_iter + 1
+from run_gate import run_gate_match
+from run_train import (
+    RESET_OPTIMIZER,
+    RESIGN_MIN_MOVES,
+    RESIGN_PLIES,
+    RESIGN_THRESHOLD,
+    STOP_INTERVAL,
+    TRAIN,
+    _training_span,
+)
 
 
 def main() -> None:
@@ -96,6 +59,12 @@ def main() -> None:
     start_iter, end_iter, train_iterations = _training_span(
         resume_path, TRAIN["resume"], STOP_INTERVAL,
     )
+    prev_iter = end_iter - STOP_INTERVAL
+    if prev_iter < 0:
+        raise SystemExit(
+            f"Cannot gate: end_iter={end_iter} has no prev checkpoint "
+            f"(need end_iter >= {STOP_INTERVAL})"
+        )
 
     resign_args: list[str] = []
     if TRAIN["resign"]:
@@ -145,11 +114,37 @@ def main() -> None:
         f"training span: iters {start_iter}..{end_iter} "
         f"({train_iterations} iterations), stop_interval={STOP_INTERVAL}"
     )
+    print(f"after train: gate {end_iter} vs {prev_iter} (gate_sims={TRAIN['gate_sims']})")
     print("command:    ", " ".join(cmd))
     print()
 
     os.chdir(paths.repo_dir)
     subprocess.run(cmd, check=True)
+
+    # Confirm end checkpoint exists (save_every should hit multiples of 20).
+    end_ckpt = os.path.join(paths.ckpt_dir, f"ckpt_iter_{end_iter:04d}.pt")
+    if not os.path.exists(end_ckpt):
+        raise FileNotFoundError(
+            f"Expected {end_ckpt} after training; check save_every={TRAIN['save_every']}"
+        )
+
+    print()
+    print("=" * 40)
+    print(f"TRAINING DONE — gating {end_iter} vs {prev_iter}")
+    print("=" * 40)
+    print()
+
+    run_gate_match(
+        end_iter,
+        prev_iter,
+        gate_games=int(TRAIN["gate_games"]),
+        gate_sims=int(TRAIN["gate_sims"]),
+        gate_workers=int(TRAIN.get("gate_workers", TRAIN["selfplay_workers"])),
+        gate_concurrency=int(TRAIN.get("gate_concurrency", TRAIN["concurrency"])),
+        gate_exploration_moves=int(TRAIN["gate_exploration_moves"]),
+        gate_openings=str(TRAIN["gate_openings"]),
+        draw_penalty=float(TRAIN["draw_penalty"]),
+    )
 
 
 if __name__ == "__main__":

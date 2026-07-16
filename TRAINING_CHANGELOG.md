@@ -19,9 +19,10 @@ Gates run every 20 iters vs the checkpoint **20 iters ago**. Edit only the `TRAI
 | **161**§ | **128** | **800** | **128** | **1** | **200k** | **256 SPRT** | **2.5e-4 flat** | rewind to `ckpt_iter_0160`; 200 sims only; resign off — **reverted** (one-hot policy targets from c_scale=1.0 bug + worst-child root-Q bug; iters 161–180 discarded) |
 | **161**¶ | **128** | **800** | **128** | **2** | **200k** | **128 games** | **2.5e-4 flat** | claim_draw off in search — **reverted** (17× repetition draws corrupted value targets; gate 180 vs 160 −112 Elo FAIL; iters 161–180 discarded) |
 | **161** | **128** | **800** | **128** | **2** | **200k** | **128 games** (Elo CI) | **2.5e-4 flat** | **100 sims**; resign off; **claim_draw on** in search; **value_target=root_q** (per-ply MCTS Q); Gumbel c_scale 0.1 + root-Q fixes; encoding vectorized |
-| **241** | **128** | **800** | **128** | **2**/4 | **200k** | **128 games** (Elo CI) | **2.5e-4 flat** | same as 161 + **move_temperature=4.0** for first **10** plies (sampling only); log `metrics_first_moves.csv` |
+| **241** | **128** | **800** | **128** | **2**/4 | **200k** | **128 games** (Elo CI) | **2.5e-4 flat** | same as 161 + **move_temperature=4.0** for first **10** plies (sampling only); log `metrics_first_moves.csv`; **100 sims** |
+| **261** | **128** | **800** | **128** | **2**/4 | **200k** | **128 games** (Elo CI), **gate_sims=100** | **2.5e-4 flat** | same as 241 + **self-play sims 150** (gate stays 100); keep T=4 / 10 plies |
 
-**Current row:** start **241** — same as root_q recipe plus early-ply move temperature **T=4 / 10 plies** (policy targets untempered; gates unchanged). Resume from `latest.pt`. Do **not** use `--reset-optimizer`.
+**Current row:** start **261** — T=4 / 10 plies + **self-play sims=150** (`gate_sims` still 100). Resume from `latest.pt`. Do **not** use `--reset-optimizer`.
 
 Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net only with a new `--checkpoint-dir`.
 
@@ -112,7 +113,7 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 - Wired in `colab/train.ipynb` and `lightning-ai/run_train.py` TRAIN dicts.
 - Abort watch: `value_std` should rise or stay high (not collapse toward 0); threefold count must stay ~2/128; do not trust train loss alone.
 
-### Iter 241 — move temperature (current)
+### Iter 241 — move temperature
 
 - Same recipe as root_q row, plus early-ply **move sampling temperature T=4 for first 10 plies** (`--move-temperature 4 --move-temperature-plies 10`).
 - Sampling only during exploration plies; stored policy targets stay untempered. Gate exploration / gate temperature unchanged.
@@ -121,4 +122,11 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
   (`main`={e4,d4,Nf3,c4}; `flank`=wing/fianchetto set). An older CSV header is rotated to
   `metrics_first_moves_legacy.csv` on first write after upgrade.
 
-Last updated: 2026-07-15.
+### Iter 261 — self-play sims 150 (current)
+
+- Same as 241 (T=4 / 10 plies, root_q, claim_draw on) except **self-play `--sims 150`**.
+- **`gate_sims` stays 100** for lag-20 Elo-CI gates (comparable protocol).
+- Rationale: first-move diversity recovered under T=4; gate Elo near 128-game noise floor — raise search depth for stronger training targets without jumping to 200.
+- Lightning: `lightning-ai/run_train.py` or combined `lightning-ai/run_train_and_gate.py` (train to next ×20, then gate vs −20).
+
+Last updated: 2026-07-16.

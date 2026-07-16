@@ -1,55 +1,91 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="light">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Immortalite Zero — Analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
 <style>
-  :root {
-    --bg: #161512; --panel: #262421; --light: #f0d9b5; --dark: #b58863;
-    --accent: #759900; --text: #bababa; --text-bright: #e8e6e3;
-    --best: #3692e7;
+  :root, html.light {
+    --c-bg-page: hsl(37deg 10% 92%);
+    --c-bg: #ffffff;
+    --c-bg-zebra: hsl(37deg 12% 96.5%);
+    --c-bg-variation: hsl(37deg 12% 92%);
+    --c-font: hsl(0 0% 30%);
+    --c-font-dim: hsl(0 0% 47%);
+    --c-good: hsl(88 62% 37%);
+    --c-primary: hsl(209 77% 46%);
+    --c-border: hsl(0 0% 85%);
+    --c-accent: hsl(22 100% 42%);
+    --c-metal: #888888;
+    --c-metal-hover: #757575;
+    --light: #f0d9b5;
+    --dark: #b58863;
+    /* aliases used by legacy selectors / JS-facing names */
+    --bg: var(--c-bg-page);
+    --panel: var(--c-bg);
+    --accent: var(--c-good);
+    --text: var(--c-font);
+    --text-bright: var(--c-font);
+    --best: var(--c-primary);
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: "Segoe UI", system-ui, sans-serif;
+    margin: 0; background: var(--c-bg-page); color: var(--c-font);
+    font-family: "Noto Sans", "Segoe UI", system-ui, sans-serif;
     display: flex; flex-direction: column; align-items: center;
     padding: 24px; gap: 12px; min-height: 100vh;
   }
-  .main { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
-  h1 { font-size: 18px; color: var(--text-bright); margin: 0 0 12px; font-weight: 600; }
-  .left { display: flex; gap: 10px; }
-  .evalbar {
-    width: 22px; height: 480px; background: #4d4d4d; border-radius: 3px;
-    overflow: hidden; position: relative; display: flex; flex-direction: column-reverse;
+  .main { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+  h1 {
+    font-size: 14px; font-weight: 600; color: #fff;
+    background: var(--c-good); margin: -12px -12px 8px; padding: 8px 12px;
+    border-radius: 3px 3px 0 0; letter-spacing: .2px;
   }
-  .evalbar .white { background: #f7f7f7; width: 100%; transition: height .3s ease; }
+  .left { display: flex; gap: 8px; align-items: flex-start; }
+  .board-col { display: flex; flex-direction: column; gap: 6px; }
+  .evalbar {
+    width: 18px; height: 480px; background: #666; border-radius: 2px;
+    overflow: hidden; position: relative; display: flex; flex-direction: column-reverse;
+    border: 1px solid rgba(0,0,0,.18); flex-shrink: 0;
+  }
+  .evalbar .white { background: #fff; width: 100%; transition: height .45s cubic-bezier(.25, .1, .25, 1); }
   .evalbar .num {
-    position: absolute; width: 100%; text-align: center; font-size: 10px;
-    color: #111; top: 4px; font-weight: 700; z-index: 2;
+    position: absolute; left: 0; right: 0; top: 3px;
+    text-align: center; font-size: 9px; line-height: 1.1;
+    color: #111; font-weight: 700; z-index: 2; pointer-events: none;
+    text-shadow: 0 0 2px #fff, 0 0 3px #fff;
   }
   .evalbar.untrained .white { opacity: 0.55; }
   .board-wrap { position: relative; width: 480px; height: 480px; touch-action: none; }
+  .fen-under {
+    width: 480px;
+  }
+  .fen-under input {
+    width: 100%; font-size: 11px; padding: 5px 7px;
+    color: var(--c-font-dim); background: var(--c-bg);
+  }
   .board { display: grid; grid-template-columns: repeat(8, 60px); grid-template-rows: repeat(8, 60px); }
   .sq {
     width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;
     font-size: 44px; cursor: pointer; user-select: none; position: relative;
   }
   .sq.light { background: var(--light); } .sq.dark { background: var(--dark); }
-  .sq.sel { box-shadow: inset 0 0 0 4px rgba(155,199,0,.8); }
-  .sq.last-move { background-color: rgba(155,199,0,.35) !important; }
+  .sq.sel { box-shadow: inset 0 0 0 60px rgba(20, 85, 30, 0.5); }
+  .sq.last-move { background-color: rgba(155, 199, 0, 0.41) !important; }
   .sq.in-check { box-shadow: inset 0 0 0 4px rgba(255,0,0,.65); }
   .sq.dest:not(.dest-capture)::after {
     content: ""; position: absolute; width: 20px; height: 20px;
-    background: var(--accent); opacity: 0.45; border-radius: 50%;
+    background: var(--c-good); opacity: 0.45; border-radius: 50%;
     pointer-events: none; z-index: 1;
   }
   .sq.dest-capture::after {
     content: ""; position: absolute; top: 50%; left: 50%;
     width: 48px; height: 48px; transform: translate(-50%, -50%);
     border-radius: 50%; background: transparent;
-    box-shadow: 0 0 0 5px rgba(117, 153, 0, 0.55);
+    box-shadow: 0 0 0 5px rgba(98, 153, 36, 0.55);
     pointer-events: none; z-index: 1;
   }
   .sq.dest-capture .piece { position: relative; z-index: 2; }
@@ -72,92 +108,507 @@
   }
   .drag-ghost.w { color: #fff; text-shadow: 0 0 2px #000, 0 1px 2px #000; }
   .drag-ghost.b { color: #000; text-shadow: 0 0 1px #888; }
-  svg.arrows { position: absolute; top: 0; left: 0; width: 480px; height: 480px; pointer-events: none; }
-  .panel { background: var(--panel); border-radius: 6px; padding: 16px; width: 320px; }
-  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-  button { background: var(--accent); color: #fff; border: none; padding: 7px 12px;
-        border-radius: 4px; cursor: pointer; font-size: 13px; }
-  button.secondary { background: #3a3835; }
-  button.active-style { outline: 2px solid var(--accent); }
-  textarea, input[type=text] { width: 100%; background: #1b1a17; color: var(--text-bright);
-        border: 1px solid #3a3835; border-radius: 4px; padding: 6px; font-family: monospace; font-size: 12px; }
-  label { font-size: 12px; }
+  svg.arrows, svg.shapes {
+    position: absolute; top: 0; left: 0; width: 480px; height: 480px; pointer-events: none;
+  }
+  .arrows-toggle { display: flex; align-items: center; gap: 8px; margin: 2px 0 4px; }
+  .arrows-toggle .engine-label { font-size: 11px; color: var(--c-font-dim); }
+  .panel {
+    background: var(--c-bg); border-radius: 3px; padding: 12px;
+    width: 340px; border: 1px solid var(--c-border);
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  button {
+    background: var(--c-good); color: #fff; border: none; padding: 6px 10px;
+    border-radius: 3px; cursor: pointer; font-size: 12px;
+    font-family: inherit; font-weight: 600;
+  }
+  button:hover { filter: brightness(1.05); }
+  button.secondary {
+    background: var(--c-metal); color: #fff; font-weight: 600;
+  }
+  button.secondary:hover { background: var(--c-metal-hover); filter: none; }
+  button.active-style { outline: 2px solid var(--c-good); outline-offset: 1px; }
+  textarea, input[type=text] {
+    width: 100%; background: var(--c-bg); color: var(--c-font);
+    border: 1px solid var(--c-border); border-radius: 3px; padding: 6px;
+    font-family: monospace; font-size: 12px;
+  }
+  label { font-size: 12px; color: var(--c-font); }
+  /* Ceval header — Lichess-style compact row */
+  .ceval {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 4px; min-height: 28px;
+  }
+  .ceval-engine {
+    font-size: 13px; font-weight: 600; color: var(--c-font); white-space: nowrap;
+  }
+  .ceval-depth {
+    font-size: 11px; color: var(--c-font-dim); font-family: monospace;
+    flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  @keyframes ceval-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.42; }
+  }
+  .ceval-depth.deepening { animation: ceval-pulse 1.15s ease-in-out infinite; }
+  #lines.deepening .eval-line { animation: ceval-pulse 1.15s ease-in-out infinite; }
+  .ceval-wrap { position: relative; margin-bottom: 4px; }
+  .ceval-wrap .ceval { margin-bottom: 0; }
+  .ceval-settings {
+    display: flex; align-items: center; gap: 6px; margin-left: auto;
+  }
+  .ceval-settings label {
+    font-size: 11px; color: var(--c-font-dim); display: flex; align-items: center; gap: 4px;
+  }
+  .ceval-settings input {
+    width: 42px; padding: 3px 4px; font-size: 11px;
+  }
+  .ceval-settings button { padding: 4px 8px; font-size: 11px; }
+  button.ceval-gear {
+    background: transparent; color: var(--c-font-dim); padding: 4px;
+    box-shadow: none; font-weight: 400; line-height: 0;
+  }
+  button.ceval-gear:hover { color: var(--c-primary); filter: none; }
+  button.ceval-gear.open {
+    color: var(--c-primary); filter: none;
+    background: color-mix(in srgb, var(--c-primary) 12%, transparent);
+  }
+  button.ceval-gear svg { width: 16px; height: 16px; display: block; }
+  .ceval-settings-panel {
+    display: none;
+    position: absolute; right: 0; top: calc(100% + 4px); z-index: 40;
+    background: var(--c-bg); border: 1px solid var(--c-border);
+    border-radius: 3px; box-shadow: 0 4px 14px rgba(0,0,0,.12);
+    padding: 12px 14px; min-width: 268px;
+  }
+  .ceval-settings-panel.open { display: block; }
+  .ceval-settings-panel .setting-row {
+    display: grid; grid-template-columns: 1fr auto; gap: 8px 12px;
+    align-items: center; margin-bottom: 10px;
+  }
+  .ceval-settings-panel .setting-row:last-child { margin-bottom: 0; }
+  .ceval-settings-panel .setting-row.stack {
+    grid-template-columns: 1fr;
+  }
+  .ceval-settings-panel .setting-label {
+    font-size: 12px; color: var(--c-font); font-weight: 600;
+  }
+  .ceval-settings-panel .setting-value {
+    font-size: 12px; color: var(--c-font-dim); font-variant-numeric: tabular-nums;
+    font-family: monospace; min-width: 1.5em; text-align: right;
+  }
+  .ceval-settings-panel input[type=range] {
+    width: 100%; accent-color: var(--c-primary); margin: 0;
+  }
+  .ceval-settings-panel input[type=number],
+  .ceval-settings-panel select {
+    width: 72px; background: var(--c-bg); color: var(--c-font);
+    border: 1px solid var(--c-border); border-radius: 3px; padding: 4px 6px;
+    font-family: monospace; font-size: 12px;
+  }
+  .ceval-settings-panel select { width: 64px; }
+  .ceval-settings-panel .setting-controls {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .ceval-settings-panel .setting-controls input[type=range] { flex: 1; }
+  .ceval-settings-panel label.check {
+    display: flex; align-items: center; gap: 8px; font-size: 12px;
+    color: var(--c-font); font-weight: 600; cursor: pointer;
+  }
+  .ceval-settings-panel label.check input { width: auto; margin: 0; accent-color: var(--c-primary); }
+  .engine-label { font-size: 12px; color: var(--c-font); }
+  .switch { position: relative; width: 32px; height: 18px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; inset: 0; background: #ccc; border-radius: 20px; cursor: pointer;
+    transition: background .2s;
+  }
+  .switch .slider::before {
+    content: ""; position: absolute; width: 12px; height: 12px; left: 3px; top: 3px;
+    background: #fff; border-radius: 50%; transition: transform .2s, background .2s;
+    box-shadow: 0 1px 2px rgba(0,0,0,.2);
+  }
+  .switch input:checked + .slider { background: var(--c-good); }
+  .switch input:checked + .slider::before { transform: translateX(14px); background: #fff; }
+  .engine-status {
+    font-size: 10px; color: var(--c-font-dim); margin-bottom: 6px; min-height: 12px;
+  }
+  /* Candidate PV rows — score, visit%, move + PV, play */
+  #lines { border-top: 1px solid var(--c-border); }
   .eval-line {
-    padding: 7px 8px; border-radius: 4px; background: #1f1e1b; margin-bottom: 6px;
-    font-size: 13px; cursor: pointer; transition: background .15s;
+    display: grid; grid-template-columns: 52px 36px 1fr 22px; gap: 0 6px; align-items: center;
+    padding: 5px 6px; background: var(--c-bg);
+    font-size: 13px; cursor: pointer; transition: background .12s;
+    border-bottom: 1px solid var(--c-border);
   }
-  .eval-line:hover { background: #2a2926; }
-  .eval-line.selected { outline: 1px solid var(--accent); }
+  .eval-line:hover { background: var(--c-bg-variation); }
+  .eval-line.selected {
+    background: color-mix(in srgb, var(--c-good) 14%, var(--c-bg));
+  }
   .eval-line.dim { opacity: 0.45; }
-  .eval-line .mv { color: var(--text-bright); font-weight: 600; font-family: monospace; }
-  .eval-line .cp { float: right; font-family: monospace; }
-  .eval-line .pv { display: block; color: #8c8c8c; font-size: 11px; font-family: monospace; margin-top: 2px;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .moves { font-family: monospace; font-size: 13px; line-height: 1.7; max-height: 120px; overflow-y: auto; }
-  .moves .m { cursor: pointer; padding: 0 3px; border-radius: 3px; }
-  .moves .m.active { background: var(--accent); color: #fff; }
-  .legend { font-size: 11px; margin-top: 6px; }
-  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin: 0 4px 0 10px; }
-  .status { font-size: 11px; color: #888; margin-top: 8px; min-height: 14px; }
-  .footer {
-    font-size: 11px; color: #666; text-align: center; max-width: 860px; line-height: 1.5;
+  .eval-line .cp {
+    font-family: monospace; font-weight: 700; color: var(--c-font);
+    font-size: 13px; text-align: right;
+    font-variant-numeric: tabular-nums;
   }
-  h2 { font-size: 13px; color: var(--text-bright); margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .5px; }
+  .eval-line .visit-pct {
+    font-family: monospace; font-size: 11px; color: var(--c-font-dim);
+    font-variant-numeric: tabular-nums; text-align: right;
+  }
+  .eval-line .moves-pv {
+    min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .eval-line .mv { color: var(--c-font); font-weight: 600; font-family: monospace; margin-right: 6px; }
+  .eval-line .pv { color: var(--c-font-dim); font-size: 12px; font-family: monospace; }
+  .eval-line .play-line {
+    border: none; background: transparent; color: var(--c-font-dim);
+    cursor: pointer; padding: 2px 0; font-size: 11px; line-height: 1;
+    opacity: 0; transition: opacity .12s, color .12s;
+  }
+  .eval-line:hover .play-line,
+  .eval-line.selected .play-line { opacity: 1; }
+  .eval-line .play-line:hover { color: var(--c-good); }
+  .sq.hover-pv { background-color: rgba(155, 199, 0, 0.41) !important; }
+  .moves {
+    font-family: "Noto Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 15px; line-height: 1.8; max-height: 280px; min-height: 140px;
+    overflow-y: auto; background: var(--c-bg); border: 1px solid var(--c-border);
+    border-radius: 2px; padding: 4px 2px; color: var(--c-font);
+  }
+  /* Lichess tview2-column: index | white | black, variations full-width */
+  .moves.tview-column {
+    display: flex; flex-flow: row wrap; align-content: flex-start;
+  }
+  .moves.tview-column .idx {
+    flex: 0 0 2.2rem; color: var(--c-font-dim); text-align: end;
+    padding-right: 0.3rem; user-select: none; font-variant-numeric: tabular-nums;
+    font-size: 13px; line-height: 1.8;
+  }
+  .moves.tview-column > .m {
+    flex: 0 0 calc(50% - 1.1rem); box-sizing: border-box;
+    padding: 0 0.4rem 0 0.55rem; border-radius: 0; cursor: pointer;
+  }
+  .moves.tview-column > .m.active {
+    background: color-mix(in srgb, var(--c-primary) 28%, transparent);
+    color: var(--c-font); font-weight: 700; box-shadow: none;
+  }
+  .moves.tview-column .interrupt {
+    flex: 0 0 100%; box-sizing: border-box;
+    padding: 2px 6px 2px 2.4rem; margin: 1px 0;
+    background: var(--c-bg-variation); color: var(--c-font-dim);
+    font-size: 13px; line-height: 1.65; border-radius: 2px;
+  }
+  .moves.tview-column .interrupt .idx-inline {
+    font-weight: 600; margin-right: 2px; color: var(--c-font-dim);
+  }
+  .moves.tview-column .interrupt .m {
+    display: inline; padding: 0 3px; flex: none; border-radius: 2px;
+  }
+  .moves.tview-column .interrupt .m.active {
+    background: color-mix(in srgb, var(--c-primary) 35%, transparent);
+    color: var(--c-font); font-weight: 700;
+  }
+  .moves.inline {
+    display: block; line-height: 1.45; font-size: 13px; font-family: monospace;
+    padding: 5px 7px; background: var(--c-bg-zebra);
+  }
+  .moves.inline .var {
+    margin: 0; font-size: 12px; opacity: 0.9;
+  }
+  .moves .m { cursor: pointer; padding: 1px 3px; border-radius: 3px; }
+  .moves .m.active {
+    background: var(--c-good); color: #fff; font-weight: 700;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-good) 55%, #000);
+  }
+  .moves.tview-column .m.active {
+    background: color-mix(in srgb, var(--c-primary) 28%, transparent);
+    color: var(--c-font); box-shadow: none;
+  }
+  .moves .var {
+    color: var(--c-font-dim);
+    margin: 0 0.2em;
+    letter-spacing: 0.01em;
+  }
+  .moves .var > .m { margin: 0 1px; }
+  .moves .m.pending-delete { outline: 2px solid #c33; outline-offset: 1px; opacity: 0.75; }
+  .eval-line .moves-pv {
+    min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    font-family: "Noto Sans", "Segoe UI", system-ui, sans-serif; font-size: 13px;
+  }
+  .eval-line .pv-num { color: var(--c-font-dim); margin-right: 2px; }
+  .eval-line .pv-san { color: var(--c-font); margin-right: 0.4em; }
+  .eval-line .pv-san:first-of-type { font-weight: 600; }
+  .eval-chart {
+    display: block; width: 100%; height: 48px; margin: 4px 0 2px;
+    background: var(--c-bg-zebra); border: 1px solid var(--c-border); border-radius: 2px;
+    cursor: pointer;
+  }
+  .eval-chart.empty { opacity: 0.45; cursor: default; }
+  .tools-strip .tool-btn.active-style {
+    color: var(--c-good); border-color: var(--c-good);
+    background: color-mix(in srgb, var(--c-good) 10%, transparent);
+  }
+  body.zen #footer,
+  body.zen .fen-under,
+  body.zen .chrome-extra,
+  body.zen #explorer {
+    display: none !important;
+  }
+  body.zen {
+    padding-top: 12px; padding-bottom: 12px;
+  }
+  #analyse-cm {
+    display: none; position: fixed; z-index: 300; min-width: 180px;
+    background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 3px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 4px 0; font-size: 13px;
+  }
+  #analyse-cm.visible { display: block; }
+  #analyse-cm .cm-title {
+    margin: 0; padding: 6px 12px 8px; font-weight: 700; color: var(--c-font);
+    border-bottom: 1px solid var(--c-border); font-family: monospace;
+  }
+  #analyse-cm a {
+    display: block; padding: 7px 12px; color: var(--c-font); text-decoration: none;
+    cursor: pointer; white-space: nowrap;
+  }
+  #analyse-cm a:hover { background: var(--c-bg-zebra); color: var(--c-primary); }
+  #analyse-cm a.danger:hover { color: #c33; }
+  .tools-strip {
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+    margin: 6px 0 2px; padding: 2px 0;
+  }
+  .tools-strip .tool-btn {
+    background: transparent; color: var(--c-font-dim); border: 1px solid var(--c-border);
+    padding: 3px 8px; font-size: 11px; font-weight: 600; border-radius: 3px;
+  }
+  .tools-strip .tool-btn:hover:not(:disabled) {
+    color: var(--c-primary); border-color: var(--c-primary); filter: none;
+  }
+  .tools-strip .tool-btn:disabled {
+    opacity: 0.4; cursor: not-allowed;
+  }
+  .copy-row {
+    display: flex; align-items: stretch; gap: 6px;
+  }
+  .copy-row input[type=text],
+  .copy-row textarea { flex: 1; min-width: 0; }
+  .copy-row .copy-btn {
+    flex-shrink: 0; align-self: stretch; padding: 4px 8px; font-size: 11px;
+  }
+  .fen-under .copy-row { width: 100%; }
+  .legend { font-size: 10px; margin: 4px 0 8px; color: var(--c-font-dim); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin: 0 3px 0 8px; }
+  .status { font-size: 11px; color: var(--c-font-dim); margin-top: 8px; min-height: 14px; }
+  .vcr {
+    display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+    margin: 4px 0 10px; justify-content: flex-start;
+  }
+  .vcr button { min-width: 28px; padding: 4px 6px; font-size: 12px; }
+  .vcr #flip { min-width: auto; padding: 4px 8px; font-size: 11px; margin-right: 4px; }
+  .vcr button:disabled { opacity: 0.35; cursor: default; }
+  .lines-empty { font-size: 12px; color: var(--c-font-dim); padding: 8px 4px; }
+  button:disabled { opacity: 0.35; cursor: default; }
+  .footer {
+    font-size: 11px; color: var(--c-font-dim); text-align: center; max-width: 860px; line-height: 1.5;
+  }
+  h2, .section-label {
+    font-size: 10px; color: var(--c-font-dim); margin: 10px 0 4px;
+    text-transform: uppercase; letter-spacing: .4px; font-weight: 600;
+  }
+  .section-label { margin-top: 8px; }
   .modal-backdrop {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35);
     align-items: center; justify-content: center; z-index: 100; pointer-events: none;
   }
   .modal-backdrop.open { display: flex; pointer-events: auto; }
   .modal {
-    background: var(--panel); border-radius: 8px; padding: 16px 20px; text-align: center;
+    background: var(--c-bg); border-radius: 3px; padding: 16px 20px; text-align: center;
+    border: 1px solid var(--c-border); box-shadow: 0 4px 16px rgba(0,0,0,.12);
   }
-  .modal h3 { margin: 0 0 12px; color: var(--text-bright); font-size: 14px; }
+  .modal h3 { margin: 0 0 12px; color: var(--c-font); font-size: 14px; }
   .promo-btns { display: flex; gap: 10px; justify-content: center; }
   .promo-btns button { font-size: 28px; min-width: 52px; padding: 8px; }
+  .explorer {
+    display: none; margin-top: 8px; padding: 6px 8px;
+    background: var(--c-bg-zebra); border-radius: 2px; border: 1px solid var(--c-border);
+    max-height: 240px; overflow: hidden; flex-direction: column;
+  }
+  .explorer.open { display: flex; }
+  .explorer-db { display: flex; gap: 4px; margin-bottom: 6px; }
+  .explorer-db button { font-size: 11px; padding: 3px 8px; }
+  .explorer-opening {
+    font-size: 11px; color: var(--c-font); margin-bottom: 4px;
+    line-height: 1.3; min-height: 0;
+  }
+  .explorer-opening .eco { color: var(--c-font-dim); margin-right: 5px; }
+  .explorer-status { font-size: 11px; color: var(--c-font-dim); padding: 4px 2px; }
+  .explorer-status.error { color: #c03333; }
+  .explorer-moves {
+    overflow-y: auto; max-height: 180px; flex: 1; min-height: 0;
+  }
+  .explorer-row {
+    display: grid; grid-template-columns: 44px 1fr 36px;
+    gap: 6px; align-items: center;
+    padding: 3px 4px; border-radius: 0; cursor: pointer;
+    font-size: 11px; font-family: monospace;
+    border-bottom: 1px solid color-mix(in srgb, var(--c-border) 70%, transparent);
+  }
+  .explorer-row:hover { background: var(--c-bg-variation); }
+  .explorer-row .san { color: var(--c-font); font-weight: 600; }
+  .explorer-row .games { color: var(--c-font-dim); text-align: right; font-size: 10px; }
+  .explorer-bar {
+    height: 6px; border-radius: 1px; overflow: hidden;
+    display: flex; background: var(--c-border);
+  }
+  .explorer-bar .w { background: #fff; border: 1px solid #bbb; box-sizing: border-box; }
+  .explorer-bar .d { background: #a0a0a0; }
+  .explorer-bar .b { background: #555; }
+  .help-modal { text-align: left; max-width: 360px; width: 90vw; }
+  .help-modal h3 { text-align: center; }
+  .help-modal dl {
+    margin: 0 0 14px; display: grid; grid-template-columns: auto 1fr;
+    gap: 4px 14px; font-size: 12px;
+  }
+  .help-modal dt {
+    font-family: monospace; color: var(--c-font); white-space: nowrap;
+  }
+  .help-modal dd { margin: 0; color: var(--c-font-dim); }
+  .help-modal .help-close { display: block; margin: 0 auto; }
 </style>
 </head>
 <body>
   <div class="main">
     <div class="left">
       <div class="evalbar" id="evalBar"><div class="num" id="evalNum">0.0</div><div class="white" id="evalWhite" style="height:50%"></div></div>
-      <div class="board-wrap" id="boardWrap">
-        <div class="board" id="board"></div>
-        <svg class="arrows" id="arrows" viewBox="0 0 480 480"></svg>
+      <div class="board-col">
+        <div class="board-wrap" id="boardWrap">
+          <div class="board" id="board"></div>
+          <svg class="shapes" id="shapes" viewBox="0 0 480 480"></svg>
+          <svg class="arrows" id="arrows" viewBox="0 0 480 480"></svg>
+        </div>
+        <div class="fen-under">
+          <div class="copy-row">
+            <input type="text" id="fenOut" readonly title="Current FEN" aria-label="Current FEN" />
+            <button type="button" id="copyFen" class="secondary copy-btn" title="Copy FEN">Copy FEN</button>
+          </div>
+        </div>
       </div>
     </div>
 
     <div class="panel">
-      <h1>Immortalite Zero — Analysis</h1>
-      <div class="row">
-        <button id="flip" class="secondary" title="Flip board (F)">Flip</button>
-        <button id="reset" class="secondary">Start pos</button>
-        <button id="prev" class="secondary" title="Previous move (←)">◀</button>
-        <button id="next" class="secondary" title="Next move (→)">▶</button>
-      </div>
-      <div class="row">
-        <label>Sims <input type="text" id="sims" value="200" style="width:50px" /></label>
-        <button id="analyze" title="Analyze (A)">Analyze</button>
-      </div>
+      <h1>Immortalite Zero</h1>
 
-      <h2>Candidate lines</h2>
+      <div class="ceval-wrap">
+        <div class="ceval">
+          <label class="switch" title="Toggle local analysis (L)">
+            <input type="checkbox" id="engineOn" checked />
+            <span class="slider"></span>
+          </label>
+          <span class="ceval-engine" id="cevalEngine">local net</span>
+          <span id="cevalDepth" class="ceval-depth">sims 0</span>
+          <div class="ceval-settings">
+            <label title="MCTS simulations">Sims <input type="text" id="sims" value="200" /></label>
+            <button type="button" id="cevalSettingsBtn" class="ceval-gear" title="Engine settings" aria-label="Engine settings" aria-expanded="false" aria-controls="cevalSettingsPanel">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.2 7.2 0 0 0-1.62-.94l-.36-2.54A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.64 8.48a.49.49 0 0 0 .12.61l2.03 1.58c-.04.31-.07.63-.07.94s.03.63.07.94L2.76 14.1a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.3.59.22l2.39-.96c.5.4 1.04.72 1.62.94l.36 2.54c.05.24.25.42.49.42h4c.24 0 .44-.18.49-.42l.36-2.54c.58-.22 1.12-.54 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+            </button>
+            <button id="analyze" title="Analyze (button / Space / Shift+A)">Analyze</button>
+          </div>
+        </div>
+        <div id="cevalSettingsPanel" class="ceval-settings-panel" role="dialog" aria-label="Engine settings">
+          <div class="setting-row stack">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <span class="setting-label">Multiple lines</span>
+              <span class="setting-value" id="cevalMultipvVal">5</span>
+            </div>
+            <input type="range" id="cevalMultipv" min="1" max="5" step="1" value="5" aria-label="Multiple lines" />
+          </div>
+          <div class="setting-row stack">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <span class="setting-label">Target simulations</span>
+              <input type="number" id="cevalTargetSims" min="25" max="800" step="1" value="200" aria-label="Target simulations" />
+            </div>
+            <input type="range" id="cevalSimsRange" min="25" max="800" step="25" value="200" aria-label="Target simulations slider" />
+          </div>
+          <div class="setting-row">
+            <label class="check" for="cevalProgressive">
+              <input type="checkbox" id="cevalProgressive" checked />
+              Progressive deepen
+            </label>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">PV length</span>
+            <select id="cevalPvLen" aria-label="PV length">
+              <option value="4">4</option>
+              <option value="6">6</option>
+              <option value="8" selected>8</option>
+              <option value="12">12</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="engine-status" id="engineStatus">Ready</div>
+
+      <div class="arrows-toggle">
+        <label class="switch" title="Show engine arrows on the board (A)">
+          <input type="checkbox" id="showEngineArrows" checked />
+          <span class="slider"></span>
+        </label>
+        <div class="engine-label">Engine arrows</div>
+      </div>
       <div id="lines"></div>
       <div class="legend">
         <span class="dot" style="background:var(--best)"></span>best
+        <span class="dot" style="background:#88bb66"></span>candidates
       </div>
 
-      <h2>Moves</h2>
+      <div class="section-label">Moves</div>
       <div class="moves" id="moves"></div>
-
-      <h2>Import PGN / FEN</h2>
-      <textarea id="importBox" rows="3" placeholder="Paste a PGN game or a FEN string..."></textarea>
-      <div class="row" style="margin-top:6px">
-        <button id="loadBtn">Load</button>
+      <svg id="evalChart" class="eval-chart empty" viewBox="0 0 320 48" preserveAspectRatio="none" aria-label="Mainline eval chart (white-relative cp)" title="Mainline eval (white-relative). Click a point to jump."></svg>
+      <div class="tools-strip" role="toolbar" aria-label="Analysis tools">
+        <button type="button" id="toolExplorer" class="tool-btn" title="Opening explorer (e)">Explorer</button>
+        <button type="button" id="toolSettings" class="tool-btn" title="Engine settings">Settings</button>
+        <button type="button" id="toolInline" class="tool-btn" title="Inline notation (Shift+I)">Inline</button>
+        <button type="button" id="toolCoords" class="tool-btn active-style" title="Board coordinates">Coords</button>
+        <button type="button" id="toolAutoplay" class="tool-btn" title="Autoplay along line (p)">▶▶ Play</button>
+        <button type="button" id="toolClearShapes" class="tool-btn" title="Clear drawings (Backspace)">Clear drawings</button>
+      </div>
+      <div class="vcr">
+        <button id="flip" class="secondary" title="Flip board (F)">Flip</button>
+        <button id="reset" class="secondary" title="Start position">Start</button>
+        <button id="first" class="secondary" title="First (Home / 0)">⟪</button>
+        <button id="prev" class="secondary" title="Previous (← / K)">◀</button>
+        <button id="next" class="secondary" title="Next (→ / J)">▶</button>
+        <button id="last" class="secondary" title="Last (End / $)">⟫</button>
+        <button id="autoplay" class="secondary" title="Autoplay (p)">▶▶</button>
       </div>
 
-      <h2>Live PGN / FEN</h2>
-      <textarea id="pgnOut" rows="3" readonly></textarea>
-      <div class="row" style="margin-top:6px">
-        <input type="text" id="fenOut" readonly />
+      <div id="explorer" class="explorer" aria-hidden="true">
+        <div class="section-label" style="margin-top:0">Opening explorer</div>
+        <div class="explorer-db" role="group" aria-label="Database">
+          <button type="button" id="explorerDbMasters" class="secondary active-style">Masters</button>
+          <button type="button" id="explorerDbLichess" class="secondary">Lichess</button>
+        </div>
+        <div id="explorerOpening" class="explorer-opening" hidden></div>
+        <div id="explorerBody" class="explorer-moves">
+          <div class="explorer-status">Press e to open</div>
+        </div>
+      </div>
+
+      <div class="chrome-extra">
+        <div class="section-label">Import PGN / FEN</div>
+        <textarea id="importBox" rows="3" placeholder="Paste a PGN game or a FEN string..."></textarea>
+        <div class="row" style="margin-top:6px">
+          <button id="loadBtn">Load</button>
+        </div>
+
+        <div class="section-label">Live PGN</div>
+        <div class="copy-row">
+          <textarea id="pgnOut" rows="3" readonly></textarea>
+          <button type="button" id="copyPgn" class="secondary copy-btn" title="Copy PGN">Copy PGN</button>
+          <button type="button" id="downloadPgn" class="secondary copy-btn" title="Download PGN file">Download</button>
+        </div>
       </div>
       <div class="status" id="status"></div>
     </div>
@@ -172,6 +623,41 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="helpModal">
+    <div class="modal help-modal">
+      <h3>Keyboard shortcuts</h3>
+      <dl>
+        <dt>f</dt><dd>Flip board</dd>
+        <dt>← / k</dt><dd>Previous move</dd>
+        <dt>→ / j</dt><dd>Next move</dd>
+        <dt>Home / 0</dt><dd>First (root)</dd>
+        <dt>End / $</dt><dd>Last (end of branch)</dd>
+        <dt>Wheel</dt><dd>Prev / next ply (over board)</dd>
+        <dt>l</dt><dd>Toggle local net</dd>
+        <dt>a</dt><dd>Toggle engine arrows</dd>
+        <dt>v</dt><dd>Toggle variation arrows (siblings)</dd>
+        <dt>Space</dt><dd>Play best move (net on) / turn net on + analyze (off)</dd>
+        <dt>Shift+Space</dt><dd>Play top explorer move (if explorer open)</dd>
+        <dt>Shift+A</dt><dd>Analyze</dd>
+        <dt>Shift+I</dt><dd>Toggle inline notation</dd>
+        <dt>p</dt><dd>Play / pause autoplay</dd>
+        <dt>z</dt><dd>Zen mode (hide chrome)</dd>
+        <dt>Backspace</dt><dd>Clear drawings</dd>
+        <dt>Delete</dt><dd>Delete from here (current move + rest of branch)</dd>
+        <dt>↑ / ↓</dt><dd>Cycle sibling variations</dd>
+        <dt>Shift+← / Shift+→</dt><dd>Exit / enter side variation</dd>
+        <dt>Right-click move</dt><dd>Delete / promote / make mainline / force variation / copy PGN</dd>
+        <dt>x</dt><dd>Threat mode (not implemented)</dd>
+        <dt>e</dt><dd>Toggle opening explorer (Masters / Lichess)</dd>
+        <dt>Gear</dt><dd>Engine settings (multipv, sims, progressive, PV length)</dd>
+        <dt>?</dt><dd>This help</dd>
+      </dl>
+      <button id="helpClose" class="help-close secondary">Close</button>
+    </div>
+  </div>
+
+  <div id="analyse-cm" role="menu" aria-hidden="true"></div>
+
 <script type="module">
 import { Chess } from "./chess.js";
 
@@ -179,16 +665,25 @@ const API = "/analyze";
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const UNICODE = { p:"♟", n:"♞", b:"♝", r:"♜", q:"♛", k:"♚" };
 const ANALYZE_DEBOUNCE_MS = 350;
+const EXPLORER_DEBOUNCE_MS = 200;
 
 let game = new Chess();
 let startFen = START_FEN;
-let allMoves = [];
-let ply = 0;
+/** Game tree: root has san=null; each child is { san, children, parent, evalCp?, sims?, forceVariation? }.
+ *  evalCp is white-relative centipawns (positive = White better). */
+function makeNode(san, parent = null) {
+  return { san, children: [], parent, evalCp: null, sims: null, forceVariation: false };
+}
+let root = makeNode(null);
+/** Current branch: path[0]===root … path[path.length-1]===leaf; pathIdx = cursor. */
+let path = [root];
+let pathIdx = 0;
 let orientation = "w";
 let selected = null;
 let lastAnalysis = null;
 let analyzeSeq = 0;
 let analyzeTimer = null;
+let analyzeActive = false;
 let selectedLineIdx = 0;
 let lastMove = null;
 let dragFrom = null;
@@ -196,46 +691,332 @@ let dragMoved = false;
 let dragGhost = null;
 let serverHealth = null;
 let pendingPromo = null;
+let engineOn = true;
+let showEngineArrows = true;
+let hoverLineIdx = null;
+let explorerOpen = false;
+let explorerDb = "masters";
+let explorerTimer = null;
+let explorerSeq = 0;
+let explorerFenKey = "";
+/** UI prefs (persisted under immortalite.ui). */
+const UI_SETTINGS_KEY = "immortalite.ui";
+let inlineNotation = false;
+let showVariationArrows = true;
+let showCoords = true;
+let zenMode = false;
+let autoplayTimer = null;
+let autoplaySilent = false;
+/** User board shapes: Map key → { type: 'arrow'|'circle', from, to?, colorIdx }. */
+const SHAPE_COLORS = ["#15781B", "#882020", "#003088", "#e68f00"];
+let userShapes = new Map();
+let shapeDrag = null;
+let shapeConsumedClick = false;
+let shapePreviewTo = null;
 
 const $ = id => document.getElementById(id);
 
-function isLivePosition() { return ply === allMoves.length; }
+const CEVAL_SETTINGS_KEY = "immortalite.cevalSettings";
+const CEVAL_PV_LENS = [4, 6, 8, 12];
+
+function clampInt(n, lo, hi, fallback) {
+  const v = Math.floor(Number(n));
+  if (!Number.isFinite(v)) return fallback;
+  return Math.min(hi, Math.max(lo, v));
+}
+
+function simsValue() {
+  return parseInt($("sims").value, 10) || 200;
+}
+
+function multipvValue() {
+  return clampInt($("cevalMultipv").value, 1, 5, 5);
+}
+
+function progressiveEnabled() {
+  return $("cevalProgressive").checked;
+}
+
+function pvLenValue() {
+  const v = parseInt($("cevalPvLen").value, 10);
+  return CEVAL_PV_LENS.includes(v) ? v : 8;
+}
+
+function readCevalSettings() {
+  try {
+    const raw = localStorage.getItem(CEVAL_SETTINGS_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function saveCevalSettings() {
+  localStorage.setItem(
+    CEVAL_SETTINGS_KEY,
+    JSON.stringify({
+      multipv: multipvValue(),
+      simulations: simsValue(),
+      progressive: progressiveEnabled(),
+      pvLen: pvLenValue(),
+    })
+  );
+}
+
+function readUiSettings() {
+  try {
+    const raw = localStorage.getItem(UI_SETTINGS_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function saveUiSettings() {
+  localStorage.setItem(
+    UI_SETTINGS_KEY,
+    JSON.stringify({
+      inlineNotation,
+      showVariationArrows,
+      showCoords,
+      zen: zenMode,
+    })
+  );
+}
+
+function applyUiSettingsFromStorage() {
+  const s = readUiSettings();
+  if (!s) return;
+  if (typeof s.inlineNotation === "boolean") inlineNotation = s.inlineNotation;
+  if (typeof s.showVariationArrows === "boolean") showVariationArrows = s.showVariationArrows;
+  if (typeof s.showCoords === "boolean") showCoords = s.showCoords;
+  if (typeof s.zen === "boolean") zenMode = s.zen;
+}
+
+function syncUiChrome() {
+  document.body.classList.toggle("zen", zenMode);
+  const moves = $("moves");
+  if (moves) {
+    moves.classList.toggle("inline", inlineNotation);
+    moves.classList.toggle("tview-column", !inlineNotation);
+  }
+  const inlineBtn = $("toolInline");
+  if (inlineBtn) inlineBtn.classList.toggle("active-style", inlineNotation);
+  const coordsBtn = $("toolCoords");
+  if (coordsBtn) coordsBtn.classList.toggle("active-style", showCoords);
+  updateAutoplayUi();
+}
+
+function syncSimsControls(fromId) {
+  const raw = fromId === "sims" ? $("sims").value : fromId === "cevalTargetSims" ? $("cevalTargetSims").value : $("cevalSimsRange").value;
+  const n = clampInt(raw, 1, 100000, simsValue());
+  $("sims").value = String(n);
+  $("cevalTargetSims").value = String(clampInt(n, 25, 800, n));
+  $("cevalSimsRange").value = String(clampInt(n, 25, 800, 200));
+}
+
+function applyCevalSettingsFromStorage() {
+  const s = readCevalSettings();
+  const multipv = clampInt(s && s.multipv, 1, 5, 5);
+  const progressive = !s || s.progressive !== false;
+  const pvLen = s && CEVAL_PV_LENS.includes(Number(s.pvLen)) ? Number(s.pvLen) : 8;
+  const sims =
+    s && s.simulations != null
+      ? clampInt(s.simulations, 1, 100000, simsValue())
+      : simsValue();
+
+  $("cevalMultipv").value = String(multipv);
+  $("cevalMultipvVal").textContent = String(multipv);
+  $("cevalProgressive").checked = progressive;
+  $("cevalPvLen").value = String(pvLen);
+  $("sims").value = String(sims);
+  syncSimsControls("sims");
+}
+
+function setCevalSettingsOpen(open) {
+  $("cevalSettingsPanel").classList.toggle("open", open);
+  $("cevalSettingsBtn").classList.toggle("open", open);
+  $("cevalSettingsBtn").setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+/** Progressive MCTS budgets: floor ~25 (min 8), double until target, always end on target. */
+function simsLadder(target) {
+  const t = Math.max(1, Math.floor(Number(target)) || 200);
+  if (t <= 8) return [t];
+  const start = Math.min(25, t);
+  if (start >= t) return [t];
+  const out = [];
+  let cur = Math.max(8, start);
+  while (cur < t) {
+    out.push(cur);
+    const next = cur * 2;
+    if (next >= t) break;
+    cur = next;
+  }
+  out.push(t);
+  return out;
+}
+
+function setCevalDepth(text) {
+  $("cevalDepth").textContent = text;
+}
+
+function updateEngineSimsHint(currentSims) {
+  if (!engineOn) {
+    setCevalDepth("off");
+    return;
+  }
+  const target = simsValue();
+  const a = currentSims != null ? currentSims : 0;
+  const mp = multipvValue();
+  let text = `sims ${a}/${target}`;
+  if (mp > 1) text += ` · ${mp} lines`;
+  setCevalDepth(text);
+}
+
+function setEngineStatus(text) {
+  $("engineStatus").textContent = text;
+}
+
+function updateNavButtons() {
+  const atStart = pathIdx === 0;
+  const atEnd = pathIdx === path.length - 1;
+  $("first").disabled = atStart;
+  $("prev").disabled = atStart;
+  $("next").disabled = atEnd;
+  $("last").disabled = atEnd;
+}
+
+function firstChildChain(node) {
+  const out = [];
+  let n = node;
+  while (true) {
+    const next = mainlineChild(n);
+    if (!next) break;
+    out.push(next);
+    n = next;
+  }
+  return out;
+}
+
+/** First non-forced-variation child (Lichess mainline). */
+function mainlineChild(parent) {
+  if (!parent || !parent.children) return null;
+  return parent.children.find(c => !c.forceVariation) || null;
+}
+
+/** Path root→node, then first-child extension to leaf of that branch. Cursor at node. */
+function setPathToNode(node) {
+  const toNode = [];
+  for (let n = node; n; n = n.parent) toNode.unshift(n);
+  path = toNode.concat(firstChildChain(node));
+  pathIdx = toNode.length - 1;
+}
+
+function pathSansToCursor() {
+  return path.slice(1, pathIdx + 1).map(n => n.san);
+}
+
+function clearEngineUi(message) {
+  clearTimeout(analyzeTimer);
+  analyzeTimer = null;
+  analyzeSeq++;
+  analyzeActive = false;
+  setDeepeningUi(false);
+  $("arrows").innerHTML = "";
+  $("lines").innerHTML = `<div class="lines-empty">${message}</div>`;
+  $("evalNum").textContent = "—";
+  $("evalWhite").style.height = "50%";
+  setCevalDepth("off");
+}
+
+function setDeepeningUi(on) {
+  $("cevalDepth").classList.toggle("deepening", on);
+  $("lines").classList.toggle("deepening", on);
+}
+
+function clearUserShapes() {
+  userShapes = new Map();
+  shapeDrag = null;
+  shapePreviewTo = null;
+  drawShapes();
+}
+
+function setEngineOn(on) {
+  engineOn = on;
+  $("engineOn").checked = on;
+  if (!on) {
+    clearEngineUi("Engine off");
+    setEngineStatus(`Off · ${simsValue()} sims`);
+  } else {
+    setEngineStatus(`On · ${simsValue()} sims`);
+  }
+  updateEngineSimsHint();
+}
+
+function isLivePosition() { return pathIdx === path.length - 1; }
 
 function rebuildGame() {
   game = new Chess();
   if (startFen !== START_FEN) game.load(startFen);
-  for (let i = 0; i < ply; i++) game.move(allMoves[i]);
+  for (const san of pathSansToCursor()) game.move(san);
 }
 
 function pushMove(san) {
-  allMoves = allMoves.slice(0, ply);
-  allMoves.push(san);
-  ply = allMoves.length;
+  const cur = path[pathIdx];
+  if (pathIdx + 1 < path.length && path[pathIdx + 1].san === san) {
+    pathIdx++;
+    rebuildGame();
+    return;
+  }
+  path = path.slice(0, pathIdx + 1);
+  let child = cur.children.find(c => c.san === san);
+  if (!child) {
+    child = makeNode(san, cur);
+    cur.children.push(child);
+  }
+  path.push(child);
+  const at = path.length - 1;
+  path = path.concat(firstChildChain(child));
+  pathIdx = at;
   rebuildGame();
 }
 
 function initFromStart() {
+  stopAutoplay();
   startFen = START_FEN;
-  allMoves = [];
-  ply = 0;
+  root = makeNode(null);
+  path = [root];
+  pathIdx = 0;
   game = new Chess();
   selected = null;
   lastMove = null;
   lastAnalysis = null;
   selectedLineIdx = 0;
+  clearUserShapes();
   render();
   scheduleAnalyze();
 }
 
 function loadFromChess(temp) {
+  stopAutoplay();
   const hdr = temp.header();
   startFen = hdr.FEN || START_FEN;
-  allMoves = temp.history();
-  ply = allMoves.length;
+  root = makeNode(null);
+  let node = root;
+  for (const san of temp.history()) {
+    const child = makeNode(san, node);
+    node.children.push(child);
+    node = child;
+  }
+  setPathToNode(node);
   selected = null;
-  lastMove = ply > 0 ? { san: allMoves[ply - 1] } : null;
+  lastMove = pathIdx > 0 ? { san: path[pathIdx].san } : null;
   lastAnalysis = null;
   selectedLineIdx = 0;
+  clearUserShapes();
   rebuildGame();
   render();
   scheduleAnalyze();
@@ -248,15 +1029,18 @@ function parseImport(text) {
   const fenLike = /^([rnbqkpRNBQKP1-8]+\/[rnbqkpRNBQKP1-8\/]+\s+[wb]\s+[KQkq-]+\s+[a-h3-6-]+\s+\d+\s+\d+)/;
   const firstLine = trimmed.split(/\r?\n/).find(l => l.trim() && !/^\[/.test(l.trim()))?.trim() || trimmed;
   if (fenLike.test(firstLine) && !/\d\.\s/.test(trimmed)) {
+    stopAutoplay();
     const g = new Chess();
     g.load(firstLine);
     startFen = g.fen();
-    allMoves = [];
-    ply = 0;
+    root = makeNode(null);
+    path = [root];
+    pathIdx = 0;
     selected = null;
     lastMove = null;
     lastAnalysis = null;
     selectedLineIdx = 0;
+    clearUserShapes();
     rebuildGame();
     render();
     scheduleAnalyze();
@@ -277,7 +1061,7 @@ function squareName(fileIdx, rankIdx) {
 function moveSquares(san) {
   const g = new Chess();
   if (startFen !== START_FEN) g.load(startFen);
-  for (let i = 0; i < ply - 1; i++) g.move(allMoves[i]);
+  for (let i = 1; i < pathIdx; i++) g.move(path[i].san);
   const mv = g.move(san);
   return mv ? { from: mv.from, to: mv.to } : null;
 }
@@ -302,7 +1086,7 @@ function render() {
       if (checkSq) break;
     }
   }
-  const lastSq = lastMove && ply > 0 ? moveSquares(allMoves[ply - 1]) : null;
+  const lastSq = lastMove && pathIdx > 0 ? moveSquares(path[pathIdx].san) : null;
 
   for (let r = 0; r < 8; r++) {
     for (let f = 0; f < 8; f++) {
@@ -325,13 +1109,13 @@ function render() {
         sq.appendChild(span);
       }
 
-      if (f === 0) {
+      if (showCoords && f === 0) {
         const rankCoord = document.createElement("span");
         rankCoord.className = "coord rank";
         rankCoord.textContent = String(orientation === "w" ? 8 - r : r + 1);
         sq.appendChild(rankCoord);
       }
-      if (r === 7) {
+      if (showCoords && r === 7) {
         const fileCoord = document.createElement("span");
         fileCoord.className = "coord file";
         fileCoord.textContent = "abcdefgh"[orientation === "w" ? f : 7 - f];
@@ -340,7 +1124,7 @@ function render() {
 
       if (selected === name) sq.classList.add("sel");
       const active = selected || dragFrom;
-      if (active && isLivePosition()) {
+      if (active && !game.isGameOver()) {
         const legal = game.moves({ square: active, verbose: true });
         const mv = legal.find(m => m.to === name);
         if (mv) {
@@ -360,16 +1144,76 @@ function render() {
   $("fenOut").value = game.fen();
   $("pgnOut").value = buildPgn();
   renderMoves();
+  renderEvalChart();
+  updateNavButtons();
   drawArrows();
+  drawShapes();
   updateGameOverUi();
+  scheduleExplorerRefresh();
 }
 
 function buildPgn() {
-  if (allMoves.length === 0 && startFen === START_FEN) return game.pgn();
-  const g = new Chess();
-  if (startFen !== START_FEN) g.load(startFen);
-  for (const san of allMoves) g.move(san);
-  return g.pgn();
+  if (root.children.length === 0 && startFen === START_FEN) return "";
+  const headers = [];
+  if (startFen !== START_FEN) {
+    headers.push(`[FEN "${startFen}"]`, `[SetUp "1"]`, "");
+  }
+  return headers.join("\n") + formatLinePgn(root, 0).trim();
+}
+
+function formatMoveNum(movePly, variationStart) {
+  if (movePly % 2 === 1) return `${Math.ceil(movePly / 2)}. `;
+  if (variationStart) return `${Math.floor(movePly / 2)}... `;
+  return "";
+}
+
+function formatLinePgn(parent, plyBefore) {
+  let s = "";
+  let node = parent;
+  let ply = plyBefore;
+  while (true) {
+    const main = mainlineChild(node);
+    if (!main) {
+      for (const side of node.children) {
+        s += "(" + formatVariationPgn(side, ply + 1) + ") ";
+      }
+      break;
+    }
+    const movePly = ply + 1;
+    s += formatMoveNum(movePly, false) + main.san + " ";
+    for (const side of node.children) {
+      if (side === main) continue;
+      s += "(" + formatVariationPgn(side, movePly) + ") ";
+    }
+    node = main;
+    ply = movePly;
+  }
+  return s;
+}
+
+function formatVariationPgn(startNode, startPly) {
+  let s = formatMoveNum(startPly, true) + startNode.san + " ";
+  let parent = startNode;
+  let ply = startPly;
+  while (true) {
+    const main = mainlineChild(parent);
+    if (!main) {
+      // All remaining children are forced / side lines
+      for (const side of parent.children) {
+        s += "(" + formatVariationPgn(side, ply + 1) + ") ";
+      }
+      break;
+    }
+    const movePly = ply + 1;
+    s += formatMoveNum(movePly, false) + main.san + " ";
+    for (const side of parent.children) {
+      if (side === main) continue;
+      s += "(" + formatVariationPgn(side, movePly) + ") ";
+    }
+    parent = main;
+    ply = movePly;
+  }
+  return s.trim();
 }
 
 function updateSelectionHighlight() {
@@ -378,7 +1222,7 @@ function updateSelectionHighlight() {
     const name = sq.dataset.square;
     sq.classList.remove("sel", "dest", "dest-capture");
     if (selected === name) sq.classList.add("sel");
-    if (active && isLivePosition()) {
+    if (active && !game.isGameOver()) {
       const legal = game.moves({ square: active, verbose: true });
       const mv = legal.find(m => m.to === name);
       if (mv) {
@@ -408,8 +1252,22 @@ function removeDragGhost() {
   }
 }
 
+function squareAtPoint(x, y) {
+  const el = document.elementFromPoint(x, y);
+  return el?.closest?.(".sq[data-square]")?.dataset?.square || null;
+}
+
 function onSquareDown(name, e) {
-  if (!isLivePosition() || game.isGameOver()) return;
+  if (e.button === 2 || (e.button === 0 && e.shiftKey)) {
+    e.preventDefault();
+    shapeDrag = { from: name, viaShiftLeft: e.button === 0 };
+    shapePreviewTo = name;
+    drawShapes();
+    return;
+  }
+  if (e.button !== 0) return;
+  shapeConsumedClick = false;
+  if (game.isGameOver()) return;
   e.preventDefault();
   const piece = game.get(name);
   if (piece && piece.color === game.turn()) {
@@ -421,22 +1279,45 @@ function onSquareDown(name, e) {
 }
 
 function onDocumentMouseMove(e) {
+  if (shapeDrag) {
+    const to = squareAtPoint(e.clientX, e.clientY);
+    if (to !== shapePreviewTo) {
+      shapePreviewTo = to;
+      drawShapes();
+    }
+    return;
+  }
   if (!dragGhost) return;
   dragGhost.style.left = e.clientX + "px";
   dragGhost.style.top = e.clientY + "px";
 }
 
 function onDocumentMouseUp(e) {
+  if (shapeDrag) {
+    const from = shapeDrag.from;
+    const viaShiftLeft = shapeDrag.viaShiftLeft;
+    const to = squareAtPoint(e.clientX, e.clientY) || shapePreviewTo;
+    shapeDrag = null;
+    shapePreviewTo = null;
+    if (to) {
+      if (to === from) toggleUserShape(from, null);
+      else toggleUserShape(from, to);
+    } else {
+      drawShapes();
+    }
+    // Shift+left also fires click; swallow it. Right-click does not.
+    if (viaShiftLeft) shapeConsumedClick = true;
+    return;
+  }
   removeDragGhost();
-  if (!dragFrom || !isLivePosition() || game.isGameOver()) {
+  if (!dragFrom || game.isGameOver()) {
     dragFrom = null;
     updateSelectionHighlight();
     return;
   }
   const from = dragFrom;
   dragFrom = null;
-  const el = document.elementFromPoint(e.clientX, e.clientY);
-  const to = el?.closest?.(".sq[data-square]")?.dataset?.square;
+  const to = squareAtPoint(e.clientX, e.clientY);
   if (to && to !== from) {
     tryMove(from, to);
     dragMoved = false;
@@ -446,7 +1327,8 @@ function onDocumentMouseUp(e) {
 }
 
 function onSquareClick(name) {
-  if (!isLivePosition() || game.isGameOver()) return;
+  if (shapeConsumedClick) { shapeConsumedClick = false; return; }
+  if (game.isGameOver()) return;
   if (dragMoved) { dragMoved = false; return; }
   if (selected && selected !== name) {
     tryMove(selected, name);
@@ -462,6 +1344,7 @@ function onSquareClick(name) {
 }
 
 function tryMove(from, to, promotion) {
+  if (!autoplaySilent) stopAutoplay();
   const legal = game.moves({ square: from, verbose: true });
   const mv = legal.find(m => m.to === to);
   if (!mv) { selected = null; render(); return; }
@@ -474,6 +1357,7 @@ function tryMove(from, to, promotion) {
   if (!played) return;
   selected = null;
   lastMove = played;
+  clearUserShapes();
   pushMove(played.san);
   render();
   scheduleAnalyze();
@@ -501,24 +1385,391 @@ function showPromoModal(defaultPiece) {
 function renderMoves() {
   const box = $("moves");
   box.innerHTML = "";
-  for (let i = 0; i < allMoves.length; i++) {
-    if (i % 2 === 0) box.appendChild(document.createTextNode(`${Math.floor(i / 2) + 1}. `));
-    const span = document.createElement("span");
-    span.className = "m" + (i + 1 === ply ? " active" : "");
-    span.textContent = allMoves[i] + " ";
-    span.onclick = () => goTo(i + 1);
-    box.appendChild(span);
+  box.classList.toggle("inline", inlineNotation);
+  box.classList.toggle("tview-column", !inlineNotation);
+  renderMainlineMoves(box, root, 0);
+  const active = box.querySelector(".m.active");
+  if (active) active.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function emitMoveSpan(box, node) {
+  const span = document.createElement("span");
+  span.className = "m" + (pathIdx > 0 && path[pathIdx] === node ? " active" : "");
+  span.appendChild(document.createTextNode(node.san));
+  if (inlineNotation) span.appendChild(document.createTextNode(" "));
+  span.onclick = e => {
+    if (e.button !== 0) return; // left-click only — right-click is context menu
+    goToNode(node);
+  };
+  span.oncontextmenu = e => {
+    e.preventDefault();
+    e.stopPropagation();
+    openMoveContextMenu(node, e.clientX, e.clientY);
+  };
+  box.appendChild(span);
+}
+
+function isOnMainline(node) {
+  for (let n = node; n && n.parent; n = n.parent) {
+    if (n.forceVariation) return false;
+    if (mainlineChild(n.parent) !== n) return false;
+  }
+  return !!node;
+}
+
+function deleteFromHere(node) {
+  if (!node || !node.parent) return;
+  const parent = node.parent;
+  const idx = parent.children.indexOf(node);
+  if (idx < 0) return;
+  parent.children.splice(idx, 1);
+  closeMoveContextMenu();
+  goToNode(parent === root ? root : parent);
+  $("status").textContent = "Deleted branch from here.";
+}
+
+function promoteVariation(node) {
+  if (!node || !node.parent) return;
+  const parent = node.parent;
+  const i = parent.children.indexOf(node);
+  if (i <= 0) return;
+  const tmp = parent.children[i - 1];
+  parent.children[i - 1] = node;
+  parent.children[i] = tmp;
+  closeMoveContextMenu();
+  goToNode(node);
+  $("status").textContent = "Promoted variation.";
+}
+
+/** Lichess "Force variation": demote a mainline move so it displays as a side line. */
+function forceVariation(node) {
+  if (!node || !node.parent || node === root) return;
+  if (!isOnMainline(node)) return;
+  node.forceVariation = true;
+  const parent = node.parent;
+  const i = parent.children.indexOf(node);
+  if (i >= 0) {
+    parent.children.splice(i, 1);
+    parent.children.push(node);
+  }
+  closeMoveContextMenu();
+  goToNode(node);
+  $("status").textContent = "Forced variation.";
+}
+
+function makeMainLine(node) {
+  if (!node || node === root) return;
+  const target = node;
+  let n = node;
+  while (n && n.parent) {
+    n.forceVariation = false;
+    const parent = n.parent;
+    const i = parent.children.indexOf(n);
+    if (i > 0) {
+      parent.children.splice(i, 1);
+      parent.children.unshift(n);
+    }
+    n = parent;
+  }
+  target.forceVariation = false;
+  closeMoveContextMenu();
+  goToNode(target);
+  $("status").textContent = "Made main line.";
+}
+
+function variationPgnFromNode(node) {
+  if (!node || node === root) return buildPgn();
+  // Path from root to this node, then first-child chain to leaf of this branch.
+  const chain = [];
+  for (let n = node; n && n !== root; n = n.parent) chain.unshift(n);
+  let leaf = node;
+  while (true) {
+    const next = mainlineChild(leaf);
+    if (!next) break;
+    leaf = next;
+  }
+  const toLeaf = [];
+  for (let n = leaf; n && n !== node; n = n.parent) toLeaf.unshift(n);
+  const nodes = chain.concat(toLeaf);
+  const g = new Chess();
+  if (startFen !== START_FEN) g.load(startFen);
+  for (const n of nodes) {
+    try { g.move(n.san); } catch { break; }
+  }
+  return g.pgn();
+}
+
+async function copyVariationPgn(node) {
+  const text = variationPgnFromNode(node);
+  try {
+    await navigator.clipboard.writeText(text);
+    $("status").textContent = "Variation PGN copied.";
+  } catch {
+    $("status").textContent = "Could not copy PGN.";
+  }
+  closeMoveContextMenu();
+}
+
+function closeMoveContextMenu() {
+  const el = $("analyse-cm");
+  el.classList.remove("visible");
+  el.setAttribute("aria-hidden", "true");
+  el.innerHTML = "";
+  document.querySelectorAll(".moves .m.pending-delete").forEach(s => s.classList.remove("pending-delete"));
+}
+
+function openMoveContextMenu(node, x, y) {
+  closeMoveContextMenu();
+  if (!node || node === root) return;
+  const el = $("analyse-cm");
+  const onMain = isOnMainline(node);
+  const title = document.createElement("p");
+  title.className = "cm-title";
+  title.textContent = node.san;
+  el.appendChild(title);
+
+  const add = (label, fn, danger) => {
+    const a = document.createElement("a");
+    a.href = "#";
+    a.textContent = label;
+    if (danger) a.className = "danger";
+    a.onclick = ev => { ev.preventDefault(); fn(); };
+    a.onmouseenter = () => {
+      if (danger) {
+        document.querySelectorAll(".moves .m").forEach(s => s.classList.remove("pending-delete"));
+        // highlight this node in moves list if we can find matching active path — soft: mark by re-render not needed
+      }
+    };
+    el.appendChild(a);
+  };
+
+  if (onMain) {
+    add("Force variation", () => forceVariation(node));
+  } else {
+    const i = node.parent.children.indexOf(node);
+    if (i > 1) add("Promote variation", () => promoteVariation(node));
+    if (i > 0 || node.forceVariation) add("Make main line", () => makeMainLine(node));
+  }
+  add(onMain ? "Copy main line PGN" : "Copy variation PGN", () => copyVariationPgn(node));
+  add("Delete from here", () => deleteFromHere(node), true);
+
+  el.classList.add("visible");
+  el.setAttribute("aria-hidden", "false");
+  // Position after paint so size is known
+  requestAnimationFrame(() => {
+    const w = el.offsetWidth || 180;
+    const h = el.offsetHeight || 120;
+    const left = Math.min(x, window.innerWidth - w - 4);
+    const top = Math.min(y, window.innerHeight - h - 4);
+    el.style.left = Math.max(4, left) + "px";
+    el.style.top = Math.max(4, top) + "px";
+  });
+}
+
+/** Cycle among sibling variations (same parent). */
+function cycleSiblingVariation(dir) {
+  const cur = path[pathIdx];
+  if (!cur || !cur.parent) return;
+  const sibs = cur.parent.children;
+  if (sibs.length < 2) return;
+  const i = sibs.indexOf(cur);
+  if (i < 0) return;
+  const next = sibs[(i + dir + sibs.length) % sibs.length];
+  goToNode(next);
+}
+
+/** Shift+→ enter first side variation; Shift+← jump to mainline sibling. */
+function enterOrExitVariation(enter) {
+  const cur = path[pathIdx];
+  if (!cur) return;
+  if (enter) {
+    if (cur.parent) {
+      const main = mainlineChild(cur.parent);
+      const side = cur.parent.children.find(c => c !== main);
+      if (main === cur && side) {
+        goToNode(side);
+        return;
+      }
+    }
+    if (pathIdx + 1 < path.length) {
+      const next = path[pathIdx + 1];
+      if (next.parent) {
+        const main = mainlineChild(next.parent);
+        const side = next.parent.children.find(c => c !== main);
+        if (main === next && side) goToNode(side);
+      }
+    }
+  } else {
+    if (cur.parent) {
+      const main = mainlineChild(cur.parent);
+      if (main && main !== cur) goToNode(main);
+    }
   }
 }
 
-function goTo(targetPly) {
-  targetPly = Math.max(0, Math.min(allMoves.length, targetPly));
-  ply = targetPly;
+function emitMoveNumber(box, movePly, variationStart) {
+  const t = formatMoveNum(movePly, variationStart);
+  if (t) box.appendChild(document.createTextNode(t));
+}
+
+function emitIndex(box, n) {
+  const el = document.createElement("index");
+  el.className = "idx";
+  el.textContent = String(n);
+  box.appendChild(el);
+}
+
+/** Lichess column layout: index | white | black; variations in full-width interrupt. */
+function renderMainlineColumn(box, parent, plyBefore) {
+  let node = parent;
+  let ply = plyBefore;
+  while (true) {
+    const kids = node.children;
+    if (!kids.length) break;
+    const main = mainlineChild(node);
+    const movePly = ply + 1;
+    if (main) {
+      if (movePly % 2 === 1) emitIndex(box, Math.ceil(movePly / 2));
+      emitMoveSpan(box, main);
+    }
+    const sides = kids.filter(c => c !== main);
+    if (sides.length) {
+      const interrupt = document.createElement("div");
+      interrupt.className = "interrupt";
+      for (let i = 0; i < sides.length; i++) {
+        if (i > 0) interrupt.appendChild(document.createTextNode(" "));
+        renderVariationInline(interrupt, sides[i], movePly);
+      }
+      box.appendChild(interrupt);
+    }
+    if (!main) break;
+    node = main;
+    ply = movePly;
+  }
+}
+
+function renderVariationInline(box, startNode, startPly) {
+  const idx = document.createElement("span");
+  idx.className = "idx-inline";
+  idx.textContent = formatMoveNum(startPly, true).trim();
+  box.appendChild(idx);
+  emitMoveSpan(box, startNode);
+  let parent = startNode;
+  let ply = startPly;
+  while (true) {
+    const main = mainlineChild(parent);
+    if (!main) {
+      for (const side of parent.children) {
+        box.appendChild(document.createTextNode("("));
+        renderVariationInline(box, side, ply + 1);
+        box.appendChild(document.createTextNode(")"));
+      }
+      break;
+    }
+    const movePly = ply + 1;
+    if (movePly % 2 === 1) {
+      const n = document.createElement("span");
+      n.className = "idx-inline";
+      n.textContent = Math.ceil(movePly / 2) + ".";
+      box.appendChild(n);
+    }
+    emitMoveSpan(box, main);
+    for (const side of parent.children) {
+      if (side === main) continue;
+      box.appendChild(document.createTextNode("("));
+      renderVariationInline(box, side, movePly);
+      box.appendChild(document.createTextNode(")"));
+    }
+    parent = main;
+    ply = movePly;
+  }
+}
+
+function renderMainlineMoves(box, parent, plyBefore) {
+  if (!inlineNotation) {
+    renderMainlineColumn(box, parent, plyBefore);
+    return;
+  }
+  let node = parent;
+  let ply = plyBefore;
+  while (true) {
+    const main = mainlineChild(node);
+    if (!main) break;
+    const movePly = ply + 1;
+    emitMoveNumber(box, movePly, false);
+    emitMoveSpan(box, main);
+    for (const side of node.children) {
+      if (side === main) continue;
+      const wrap = document.createElement("span");
+      wrap.className = "var";
+      wrap.appendChild(document.createTextNode("("));
+      box.appendChild(wrap);
+      renderVariationMoves(wrap, side, movePly);
+      wrap.appendChild(document.createTextNode(") "));
+    }
+    node = main;
+    ply = movePly;
+  }
+}
+
+function renderVariationMoves(box, startNode, startPly) {
+  emitMoveNumber(box, startPly, true);
+  emitMoveSpan(box, startNode);
+  let parent = startNode;
+  let ply = startPly;
+  while (true) {
+    const main = mainlineChild(parent);
+    if (!main) {
+      for (const side of parent.children) {
+        const wrap = document.createElement("span");
+        wrap.className = "var";
+        wrap.appendChild(document.createTextNode("("));
+        box.appendChild(wrap);
+        renderVariationMoves(wrap, side, ply + 1);
+        wrap.appendChild(document.createTextNode(") "));
+      }
+      break;
+    }
+    const movePly = ply + 1;
+    emitMoveNumber(box, movePly, false);
+    emitMoveSpan(box, main);
+    for (const side of parent.children) {
+      if (side === main) continue;
+      const wrap = document.createElement("span");
+      wrap.className = "var";
+      wrap.appendChild(document.createTextNode("("));
+      box.appendChild(wrap);
+      renderVariationMoves(wrap, side, movePly);
+      wrap.appendChild(document.createTextNode(") "));
+    }
+    parent = main;
+    ply = movePly;
+  }
+}
+
+function goToPathIdx(idx) {
+  if (!autoplaySilent) stopAutoplay();
+  pathIdx = Math.max(0, Math.min(path.length - 1, idx));
   selected = null;
   dragFrom = null;
   dragMoved = false;
   removeDragGhost();
-  lastMove = ply > 0 ? { san: allMoves[ply - 1] } : null;
+  clearUserShapes();
+  lastMove = pathIdx > 0 ? { san: path[pathIdx].san } : null;
+  rebuildGame();
+  render();
+  scheduleAnalyze();
+}
+
+function goToNode(node) {
+  if (!autoplaySilent) stopAutoplay();
+  setPathToNode(node);
+  selected = null;
+  dragFrom = null;
+  dragMoved = false;
+  removeDragGhost();
+  clearUserShapes();
+  lastMove = pathIdx > 0 ? { san: path[pathIdx].san } : null;
   rebuildGame();
   render();
   scheduleAnalyze();
@@ -532,49 +1783,310 @@ function squareToXY(sq) {
   return { cx: x * 60 + 30, cy: y * 60 + 30 };
 }
 
-function drawArrow(svg, from, to, color, markerId, width = 8) {
+function drawArrow(svg, from, to, color, markerId, width = 8, opacity = 0.8) {
   const a = squareToXY(from), b = squareToXY(to);
   const ns = "http://www.w3.org/2000/svg";
   const line = document.createElementNS(ns, "line");
   line.setAttribute("x1", a.cx); line.setAttribute("y1", a.cy);
   line.setAttribute("x2", b.cx); line.setAttribute("y2", b.cy);
   line.setAttribute("stroke", color); line.setAttribute("stroke-width", String(width));
-  line.setAttribute("stroke-linecap", "round"); line.setAttribute("opacity", "0.8");
+  line.setAttribute("stroke-linecap", "round"); line.setAttribute("opacity", String(opacity));
   line.setAttribute("marker-end", `url(#${markerId})`);
   svg.appendChild(line);
 }
 
+function drawCircle(svg, sq, color, opacity = 0.55) {
+  const { cx, cy } = squareToXY(sq);
+  const ns = "http://www.w3.org/2000/svg";
+  const c = document.createElementNS(ns, "circle");
+  c.setAttribute("cx", String(cx));
+  c.setAttribute("cy", String(cy));
+  c.setAttribute("r", "22");
+  c.setAttribute("fill", "none");
+  c.setAttribute("stroke", color);
+  c.setAttribute("stroke-width", "7");
+  c.setAttribute("opacity", String(opacity));
+  svg.appendChild(c);
+}
+
 function addMarker(svg, id, color) {
   const ns = "http://www.w3.org/2000/svg";
+  const defs = svg.querySelector("defs") || (() => {
+    const d = document.createElementNS(ns, "defs");
+    svg.appendChild(d);
+    return d;
+  })();
   const m = document.createElementNS(ns, "marker");
   m.setAttribute("id", id); m.setAttribute("markerWidth", "4");
   m.setAttribute("markerHeight", "4"); m.setAttribute("refX", "2"); m.setAttribute("refY", "2");
   m.setAttribute("orient", "auto");
   const p = document.createElementNS(ns, "path");
   p.setAttribute("d", "M0,0 L4,2 L0,4 Z"); p.setAttribute("fill", color);
-  m.appendChild(p); svg.appendChild(m);
+  m.appendChild(p); defs.appendChild(m);
+}
+
+function shapeKey(from, to) {
+  return to ? `a:${from}${to}` : `c:${from}`;
+}
+
+function toggleUserShape(from, to) {
+  const key = shapeKey(from, to);
+  const existing = userShapes.get(key);
+  // Click (no drag): green circle on/off only — Lichess-style quick mark.
+  if (!to) {
+    if (existing) userShapes.delete(key);
+    else userShapes.set(key, { type: "circle", from, to: null, colorIdx: 0 });
+    drawShapes();
+    return;
+  }
+  // Drag arrow: green → red → blue → yellow → remove
+  if (!existing) {
+    userShapes.set(key, { type: "arrow", from, to, colorIdx: 0 });
+  } else if (existing.colorIdx < SHAPE_COLORS.length - 1) {
+    existing.colorIdx++;
+  } else {
+    userShapes.delete(key);
+  }
+  drawShapes();
+}
+
+function drawShapes() {
+  const svg = $("shapes");
+  if (!svg) return;
+  svg.innerHTML = "";
+  for (const s of userShapes.values()) {
+    const color = SHAPE_COLORS[s.colorIdx];
+    if (s.type === "circle") {
+      drawCircle(svg, s.from, color);
+    } else if (s.to) {
+      const mid = `ushape-${s.from}${s.to}-${s.colorIdx}`;
+      addMarker(svg, mid, color);
+      drawArrow(svg, s.from, s.to, color, mid, 10, 0.75);
+    }
+  }
+  if (shapeDrag && shapePreviewTo && shapePreviewTo !== shapeDrag.from) {
+    addMarker(svg, "ushape-preview", "#15781B");
+    drawArrow(svg, shapeDrag.from, shapePreviewTo, "#15781B", "ushape-preview", 10, 0.45);
+  } else if (shapeDrag && shapePreviewTo === shapeDrag.from) {
+    drawCircle(svg, shapeDrag.from, "#15781B", 0.35);
+  }
+}
+
+function clearHoverPvHighlight() {
+  document.querySelectorAll(".sq.hover-pv").forEach(el => el.classList.remove("hover-pv"));
+}
+
+function applyHoverPvHighlight(from, to) {
+  clearHoverPvHighlight();
+  for (const el of document.querySelectorAll(".sq[data-square]")) {
+    const name = el.dataset.square;
+    if (name === from || name === to) el.classList.add("hover-pv");
+  }
+}
+
+function lineFirstUci(lineIdx) {
+  if (!lastAnalysis) return null;
+  const line = (lastAnalysis.lines || [])[lineIdx];
+  const uci = line?.move || (lineIdx === 0 ? lastAnalysis.best_move : null);
+  return uci && uci.length >= 4 ? uci : null;
+}
+
+function drawHoverGhostArrow(svg) {
+  clearHoverPvHighlight();
+  if (hoverLineIdx == null || !lastAnalysis || game.isGameOver()) return;
+  const uci = lineFirstUci(hoverLineIdx);
+  if (!uci) return;
+  const from = uci.slice(0, 2);
+  const to = uci.slice(2, 4);
+  // Stronger ghost than candidate arrows so hover PV is obvious on light theme.
+  addMarker(svg, "head-hover", "#a8c050");
+  drawArrow(svg, from, to, "#a8c050", "head-hover", 14, 0.58);
+  applyHoverPvHighlight(from, to);
+}
+
+/** Fen at a tree node (after that node's move). Root → startFen. */
+function fenAtNode(node) {
+  const g = new Chess();
+  if (startFen !== START_FEN) g.load(startFen);
+  const chain = [];
+  for (let n = node; n && n !== root; n = n.parent) chain.unshift(n);
+  for (const n of chain) {
+    try { g.move(n.san); } catch { break; }
+  }
+  return g.fen();
+}
+
+/** Sibling variation arrows from the position before the current move (pale green/gray). */
+function drawVariationArrows(svg) {
+  if (!showVariationArrows || game.isGameOver()) return;
+  const cur = path[pathIdx];
+  if (!cur || !cur.parent) return;
+  const sibs = cur.parent.children;
+  if (sibs.length < 2) return;
+  const parentFen = fenAtNode(cur.parent);
+  let drawn = 0;
+  for (const sib of sibs) {
+    if (sib === cur) continue; // skip the played move that reached this node
+    try {
+      const g = new Chess(parentFen);
+      const mv = g.move(sib.san);
+      if (!mv) continue;
+      const mid = `var-${sib.san}-${drawn}`;
+      addMarker(svg, mid, "#8fbc8f");
+      drawArrow(svg, mv.from, mv.to, "#8fbc8f", mid, 4, 0.42);
+      drawn++;
+    } catch { /* skip illegal */ }
+  }
 }
 
 function drawArrows() {
   const svg = $("arrows");
   svg.innerHTML = "";
-  if (!lastAnalysis || !isLivePosition() || game.isGameOver()) return;
-
-  addMarker(svg, "head-best", "#3692e7");
-  addMarker(svg, "head-line", "#88bb66");
-
-  const line = lastAnalysis.lines?.[selectedLineIdx];
-  if (line?.move) {
-    drawArrow(svg, line.move.slice(0, 2), line.move.slice(2, 4), "#88bb66", "head-line", 6);
+  if (game.isGameOver()) {
+    clearHoverPvHighlight();
+    return;
   }
 
-  if (lastAnalysis.best_move) {
-    drawArrow(svg, lastAnalysis.best_move.slice(0, 2), lastAnalysis.best_move.slice(2, 4), "#3692e7", "head-best", 9);
+  if (engineOn && showEngineArrows && lastAnalysis) {
+    const lines = (lastAnalysis.lines || []).slice(0, multipvValue());
+    const count = lines.length;
+
+    if (!count) {
+      if (lastAnalysis.best_move) {
+        addMarker(svg, "head-best", "#3692e7");
+        drawArrow(
+          svg,
+          lastAnalysis.best_move.slice(0, 2),
+          lastAnalysis.best_move.slice(2, 4),
+          "#3692e7",
+          "head-best",
+          9,
+          0.85
+        );
+      }
+    } else {
+      // Weaker candidates first so best / selected paint on top.
+      for (let i = count - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (!line?.move) continue;
+        const from = line.move.slice(0, 2);
+        const to = line.move.slice(2, 4);
+        const isBest = i === 0;
+        const isSelected = i === selectedLineIdx;
+        let color, width, opacity;
+        if (isBest) {
+          color = "#3692e7";
+          width = isSelected ? 11 : 9;
+          opacity = 0.85;
+        } else {
+          color = isSelected ? "#88bb66" : "#8a8a8a";
+          width = Math.max(3, 7 - i) + (isSelected ? 2 : 0);
+          opacity = isSelected ? 0.8 : Math.max(0.3, 0.62 - i * 0.08);
+        }
+        const mid = `head-${i}`;
+        addMarker(svg, mid, color);
+        drawArrow(svg, from, to, color, mid, width, opacity);
+      }
+    }
   }
+
+  drawVariationArrows(svg);
+  drawHoverGhostArrow(svg);
 }
 
 function toWhiteCp(cp, turn) {
   return turn === "w" ? cp : -cp;
+}
+
+/** Store white-relative eval on the node matching this FEN (current cursor). */
+function storeNodeEval(a) {
+  if (!a || a.eval_cp == null) return;
+  const node = path[pathIdx];
+  if (!node) return;
+  const whiteCp = toWhiteCp(a.eval_cp, fenTurn(a.fen));
+  node.evalCp = whiteCp;
+  node.sims = a.simulations ?? a.depth ?? null;
+  renderEvalChart();
+}
+
+/** Mainline nodes with evalCp for the sparkline (skip missing). */
+function mainlineEvalPoints() {
+  const pts = [];
+  let node = root;
+  let ply = 0;
+  if (node.evalCp != null) pts.push({ ply: 0, evalCp: node.evalCp, node });
+  while (true) {
+    const next = mainlineChild(node);
+    if (!next) break;
+    node = next;
+    ply++;
+    if (node.evalCp != null) pts.push({ ply, evalCp: node.evalCp, node });
+  }
+  return pts;
+}
+
+function renderEvalChart() {
+  const svg = $("evalChart");
+  if (!svg) return;
+  const pts = mainlineEvalPoints();
+  const ns = "http://www.w3.org/2000/svg";
+  svg.innerHTML = "";
+  svg.onclick = null;
+  if (pts.length < 1) {
+    svg.classList.add("empty");
+    return;
+  }
+  svg.classList.remove("empty");
+  const W = 320, H = 48, pad = 4;
+  const maxAbs = Math.max(200, ...pts.map(p => Math.abs(p.evalCp)));
+  const minPly = pts[0].ply;
+  const maxPly = pts[pts.length - 1].ply;
+  const plySpan = Math.max(1, maxPly - minPly);
+  const xy = p => {
+    const x = pad + ((p.ply - minPly) / plySpan) * (W - 2 * pad);
+    const y = H / 2 - (p.evalCp / maxAbs) * ((H / 2) - pad);
+    return { x, y };
+  };
+  // Zero line
+  const zero = document.createElementNS(ns, "line");
+  zero.setAttribute("x1", "0"); zero.setAttribute("x2", String(W));
+  zero.setAttribute("y1", String(H / 2)); zero.setAttribute("y2", String(H / 2));
+  zero.setAttribute("stroke", "var(--c-border)"); zero.setAttribute("stroke-width", "1");
+  svg.appendChild(zero);
+  if (pts.length >= 2) {
+    const d = pts.map((p, i) => {
+      const { x, y } = xy(p);
+      return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const pathEl = document.createElementNS(ns, "path");
+    pathEl.setAttribute("d", d);
+    pathEl.setAttribute("fill", "none");
+    pathEl.setAttribute("stroke", "var(--c-primary)");
+    pathEl.setAttribute("stroke-width", "1.75");
+    pathEl.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(pathEl);
+  }
+  const hitPts = [];
+  for (const p of pts) {
+    const { x, y } = xy(p);
+    hitPts.push({ x, node: p.node });
+    const c = document.createElementNS(ns, "circle");
+    c.setAttribute("cx", x.toFixed(1));
+    c.setAttribute("cy", y.toFixed(1));
+    c.setAttribute("r", path[pathIdx] === p.node ? "3.5" : "2.2");
+    c.setAttribute("fill", path[pathIdx] === p.node ? "var(--c-good)" : "var(--c-primary)");
+    svg.appendChild(c);
+  }
+  svg.onclick = e => {
+    const rect = svg.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * W;
+    let best = null, bestDist = Infinity;
+    for (const hp of hitPts) {
+      const d = Math.abs(hp.x - x);
+      if (d < bestDist) { bestDist = d; best = hp.node; }
+    }
+    if (best) goToNode(best);
+  };
 }
 
 function formatCp(cp) {
@@ -617,21 +2129,114 @@ function uciLineToSan(fen, uciMoves) {
   } catch { return uciMoves; }
 }
 
+/** Lichess-style PV: "2. Nf3 d6 3. d4 Nf6 …" with move numbers from current FEN. */
+function formatPvHtml(fen, uciMoves) {
+  const parts = (fen || "").split(/\s+/);
+  let isWhite = (parts[1] || "w") === "w";
+  let fullmove = parseInt(parts[5], 10) || 1;
+  const sans = uciLineToSan(fen, uciMoves || []);
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < sans.length; i++) {
+    if (isWhite) {
+      const num = document.createElement("span");
+      num.className = "pv-num";
+      num.textContent = fullmove + ".";
+      frag.appendChild(num);
+    } else if (i === 0) {
+      const num = document.createElement("span");
+      num.className = "pv-num";
+      num.textContent = fullmove + "...";
+      frag.appendChild(num);
+    }
+    const san = document.createElement("span");
+    san.className = "pv-san";
+    san.textContent = sans[i];
+    frag.appendChild(san);
+    if (!isWhite) fullmove++;
+    isWhite = !isWhite;
+  }
+  return frag;
+}
+
+function lineVisitPct(line, index, lines) {
+  if (line && line.visit_pct != null && Number.isFinite(Number(line.visit_pct))) {
+    return Math.round(Number(line.visit_pct));
+  }
+  if (line && line.visits != null) {
+    const total = lines.reduce((s, l) => s + (Number(l.visits) || 0), 0);
+    if (total > 0) return Math.round((Number(line.visits) / total) * 100);
+  }
+  return null;
+}
+
+function setSelectedLine(i) {
+  selectedLineIdx = i;
+  const box = $("lines");
+  box.querySelectorAll(".eval-line").forEach((el, idx) => {
+    el.classList.toggle("selected", idx === i);
+  });
+  drawArrows();
+}
+
+function playLineFirstMove(lineIdx) {
+  if (!engineOn || game.isGameOver()) return;
+  const uci = lineFirstUci(lineIdx);
+  if (!uci) {
+    $("status").textContent = "No move for that line yet — wait for analysis.";
+    return;
+  }
+  hoverLineIdx = null;
+  clearHoverPvHighlight();
+  selectedLineIdx = lineIdx;
+  tryMove(uci.slice(0, 2), uci.slice(2, 4), uci[4] || undefined);
+}
+
 function renderLines(a, analyzing) {
   const box = $("lines");
   box.innerHTML = "";
+  if (!engineOn) {
+    box.innerHTML = `<div class="lines-empty">Engine off</div>`;
+    clearHoverPvHighlight();
+    return;
+  }
   const turn = fenTurn(a?.fen);
-  const lines = a?.lines || [];
+  const lines = (a?.lines || []).slice(0, multipvValue());
+  if (!lines.length && !analyzing) {
+    box.innerHTML = `<div class="lines-empty">No lines yet</div>`;
+    clearHoverPvHighlight();
+    return;
+  }
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const div = document.createElement("div");
     div.className = "eval-line" + (i === selectedLineIdx ? " selected" : "") + (analyzing ? " dim" : "");
+    div.dataset.lineIdx = String(i);
     const cp = formatCp(toWhiteCp(line.eval_cp, turn));
-    const moveSan = uciToSan(a?.fen || game.fen(), line.move);
-    const pvSan = uciLineToSan(a?.fen || game.fen(), line.pv).join(" ");
-    div.innerHTML = `<span class="mv">${moveSan}</span><span class="cp">${cp}</span>
-                     <span class="pv">${pvSan}</span>`;
-    div.onclick = () => { selectedLineIdx = i; renderLines(a, false); drawArrows(); };
+    const pct = lineVisitPct(line, i, lines);
+    const visitHtml = pct != null ? `<span class="visit-pct">${pct}%</span>` : `<span class="visit-pct"></span>`;
+    div.innerHTML =
+      `<span class="cp">${cp}</span>${visitHtml}` +
+      `<span class="moves-pv"></span>` +
+      `<button type="button" class="play-line" title="Play this move" aria-label="Play this move">▶</button>`;
+    const pvBox = div.querySelector(".moves-pv");
+    pvBox.appendChild(formatPvHtml(a?.fen || game.fen(), line.pv && line.pv.length ? line.pv : (line.move ? [line.move] : [])));
+    // Select without full rebuild so dblclick still lands on the same row.
+    div.onclick = e => {
+      if (e.target.closest(".play-line")) return;
+      setSelectedLine(i);
+    };
+    div.ondblclick = e => {
+      e.preventDefault();
+      if (e.target.closest(".play-line")) return;
+      playLineFirstMove(i);
+    };
+    const playBtn = div.querySelector(".play-line");
+    playBtn.onclick = e => {
+      e.stopPropagation();
+      playLineFirstMove(i);
+    };
+    div.onmouseenter = () => { hoverLineIdx = i; drawArrows(); };
+    div.onmouseleave = () => { hoverLineIdx = null; drawArrows(); };
     box.appendChild(div);
   }
 }
@@ -640,55 +2245,101 @@ function updateGameOverUi() {
   if (!game.isGameOver()) return;
   const reason = game.isCheckmate() ? "Checkmate" : game.isStalemate() ? "Stalemate" : "Game over";
   $("status").textContent = reason + " — analysis disabled.";
+  setEngineStatus(reason);
   lastAnalysis = null;
   $("lines").innerHTML = "";
   $("arrows").innerHTML = "";
+  clearHoverPvHighlight();
 }
 
 function scheduleAnalyze() {
+  if (!engineOn) return;
   clearTimeout(analyzeTimer);
   analyzeTimer = setTimeout(analyze, ANALYZE_DEBOUNCE_MS);
 }
 
 async function analyze() {
+  if (!engineOn) return;
   if (game.isGameOver()) {
     updateGameOverUi();
     return;
   }
   const seq = ++analyzeSeq;
   const requestFen = game.fen();
-  $("status").textContent = "Analyzing…";
+  const target = simsValue();
+  const ladder = progressiveEnabled() ? simsLadder(target) : [target];
+  analyzeActive = true;
+  setDeepeningUi(true);
+  updateEngineSimsHint(0);
+  setEngineStatus(
+    progressiveEnabled() && ladder.length > 1
+      ? `Deepening… · ${target} sims`
+      : `Analyzing… · ${target} sims`
+  );
+  $("status").textContent = "";
   setEvalBarPending();
   renderLines(lastAnalysis, true);
   $("arrows").innerHTML = "";
+  clearHoverPvHighlight();
 
+  let totalMs = 0;
+  let lastElapsed = null;
   try {
-    const res = await fetch(API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fen: game.fen(),
-        multipv: 5,
-        simulations: parseInt($("sims").value, 10) || 200,
-      }),
-    });
-    if (seq !== analyzeSeq) return;
-    if (!res.ok) throw new Error(await res.text());
-    const a = await res.json();
-    if (seq !== analyzeSeq) return;
-    if (a.fen !== requestFen) return;
+    for (let i = 0; i < ladder.length; i++) {
+      const rung = ladder[i];
+      const isFinal = i === ladder.length - 1;
+      if (seq !== analyzeSeq || !engineOn || game.fen() !== requestFen) return;
 
-    lastAnalysis = a;
-    selectedLineIdx = 0;
-    setEvalBar(a.eval_cp, fenTurn(a.fen));
-    renderLines(a, false);
-    drawArrows();
-    const ms = a.elapsed_ms != null ? ` (${a.elapsed_ms} ms)` : "";
-    $("status").textContent = `Analysis complete${ms}.`;
+      const res = await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fen: requestFen,
+          multipv: multipvValue(),
+          simulations: rung,
+          pv_len: pvLenValue(),
+        }),
+      });
+      if (seq !== analyzeSeq || !engineOn || game.fen() !== requestFen) return;
+      if (!res.ok) throw new Error(await res.text());
+      const a = await res.json();
+      if (seq !== analyzeSeq || !engineOn || game.fen() !== requestFen) return;
+      if (a.fen !== requestFen) return;
+
+      if (a.elapsed_ms != null) {
+        lastElapsed = a.elapsed_ms;
+        totalMs += a.elapsed_ms;
+      }
+      lastAnalysis = a;
+      selectedLineIdx = 0;
+      setEvalBar(a.eval_cp, fenTurn(a.fen));
+      storeNodeEval(a);
+      renderLines(a, false);
+      drawArrows();
+      const shown = a.simulations ?? a.depth ?? rung;
+      updateEngineSimsHint(shown);
+
+      if (!isFinal) {
+        setEngineStatus(`Deepening… · ${shown}/${target} sims`);
+      } else {
+        const ms =
+          lastElapsed != null
+            ? ` · ${lastElapsed} ms` + (totalMs !== lastElapsed ? ` (Σ ${totalMs} ms)` : "")
+            : "";
+        setEngineStatus(`Complete${ms} · ${target} sims`);
+        setDeepeningUi(false);
+      }
+    }
   } catch {
     if (seq !== analyzeSeq) return;
+    setEngineStatus("Backend offline");
     $("status").textContent = "Backend offline? Start: uvicorn server.app:app --port 8000";
-    renderLines(null, false);
+    renderLines(lastAnalysis, false);
+  } finally {
+    if (seq === analyzeSeq) {
+      analyzeActive = false;
+      setDeepeningUi(false);
+    }
   }
 }
 
@@ -696,20 +2347,129 @@ async function refreshHealth() {
   try {
     const res = await fetch("/health");
     serverHealth = await res.json();
-    const ck = serverHealth.trained ? serverHealth.checkpoint.split(/[/\\]/).pop() : "untrained net";
+    const ck = serverHealth.trained
+      ? serverHealth.checkpoint.split(/[/\\]/).pop()
+      : "untrained";
+    $("cevalEngine").textContent = `local net · ${ck}`;
     $("footer").textContent =
-      `Checkpoint: ${ck} · encoding v${serverHealth.encoding_version}`;
+      `local net · ${ck} · encoding v${serverHealth.encoding_version}`;
     $("evalBar").classList.toggle("untrained", !serverHealth.trained);
   } catch {
+    $("cevalEngine").textContent = "local net";
     $("footer").textContent = "Server offline — start uvicorn server.app:app --port 8000";
   }
 }
 
-$("flip").onclick = () => { orientation = orientation === "w" ? "b" : "w"; render(); };
+$("flip").onclick = () => { flipBoard(); };
 $("reset").onclick = initFromStart;
-$("prev").onclick = () => goTo(ply - 1);
-$("next").onclick = () => goTo(ply + 1);
-$("analyze").onclick = () => { clearTimeout(analyzeTimer); analyze(); };
+$("first").onclick = () => goToPathIdx(0);
+$("prev").onclick = () => goToPathIdx(pathIdx - 1);
+$("next").onclick = () => goToPathIdx(pathIdx + 1);
+$("last").onclick = () => goToPathIdx(path.length - 1);
+$("analyze").onclick = () => {
+  requestAnalyze();
+};
+$("engineOn").onchange = e => {
+  setEngineOn(e.target.checked);
+  if (engineOn) scheduleAnalyze();
+};
+$("showEngineArrows").onchange = e => {
+  showEngineArrows = e.target.checked;
+  drawArrows();
+};
+$("boardWrap").addEventListener("contextmenu", e => e.preventDefault());
+$("boardWrap").addEventListener(
+  "wheel",
+  e => {
+    e.preventDefault();
+    if (e.deltaY > 0) goToPathIdx(pathIdx + 1);
+    else if (e.deltaY < 0) goToPathIdx(pathIdx - 1);
+  },
+  { passive: false }
+);
+
+async function copyText(text, label) {
+  try {
+    await navigator.clipboard.writeText(text || "");
+    $("status").textContent = `${label} copied`;
+  } catch {
+    $("status").textContent = `Could not copy ${label}`;
+  }
+}
+
+$("copyFen").onclick = () => copyText($("fenOut").value, "FEN");
+$("copyPgn").onclick = () => copyText($("pgnOut").value, "PGN");
+$("downloadPgn").onclick = () => {
+  const text = $("pgnOut").value || buildPgn() || "";
+  const blob = new Blob([text], { type: "application/x-chess-pgn" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "immortalite-analysis.pgn";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  $("status").textContent = "PGN downloaded.";
+};
+
+$("toolExplorer").onclick = () => toggleExplorer();
+$("toolSettings").onclick = e => {
+  e.stopPropagation();
+  setCevalSettingsOpen(!$("cevalSettingsPanel").classList.contains("open"));
+};
+$("toolInline").onclick = () => toggleInlineNotation();
+$("toolCoords").onclick = () => toggleCoords();
+$("toolAutoplay").onclick = () => toggleAutoplay();
+$("toolClearShapes").onclick = () => clearUserShapes();
+$("autoplay").onclick = () => toggleAutoplay();
+
+$("sims").oninput = () => {
+  syncSimsControls("sims");
+  saveCevalSettings();
+  if (!analyzeActive) updateEngineSimsHint();
+  if (analyzeActive) return;
+  if (engineOn) setEngineStatus(`On · ${simsValue()} sims`);
+  else setEngineStatus(`Off · ${simsValue()} sims`);
+};
+
+$("cevalSettingsBtn").onclick = e => {
+  e.stopPropagation();
+  setCevalSettingsOpen(!$("cevalSettingsPanel").classList.contains("open"));
+};
+
+$("cevalSettingsPanel").onclick = e => e.stopPropagation();
+
+document.addEventListener("click", () => {
+  if ($("cevalSettingsPanel").classList.contains("open")) setCevalSettingsOpen(false);
+});
+
+$("cevalMultipv").oninput = () => {
+  $("cevalMultipvVal").textContent = String(multipvValue());
+  saveCevalSettings();
+  if (!analyzeActive) updateEngineSimsHint(lastAnalysis?.simulations ?? lastAnalysis?.depth);
+  if (engineOn) scheduleAnalyze();
+};
+
+function onTargetSimsChange(fromId) {
+  syncSimsControls(fromId);
+  saveCevalSettings();
+  if (!analyzeActive) updateEngineSimsHint();
+  if (analyzeActive) return;
+  if (engineOn) setEngineStatus(`On · ${simsValue()} sims`);
+  else setEngineStatus(`Off · ${simsValue()} sims`);
+}
+
+$("cevalTargetSims").oninput = () => onTargetSimsChange("cevalTargetSims");
+$("cevalSimsRange").oninput = () => onTargetSimsChange("cevalSimsRange");
+
+$("cevalProgressive").onchange = () => {
+  saveCevalSettings();
+};
+
+$("cevalPvLen").onchange = () => {
+  saveCevalSettings();
+};
+
+applyCevalSettingsFromStorage();
+
 $("loadBtn").onclick = () => {
   try {
     parseImport($("importBox").value);
@@ -719,16 +2479,430 @@ $("loadBtn").onclick = () => {
   }
 };
 
+function flipBoard() {
+  orientation = orientation === "w" ? "b" : "w";
+  render();
+}
+
+function toggleEngineArrows() {
+  showEngineArrows = !showEngineArrows;
+  $("showEngineArrows").checked = showEngineArrows;
+  drawArrows();
+}
+
+function toggleLocalEngine() {
+  setEngineOn(!engineOn);
+  if (engineOn) scheduleAnalyze();
+}
+
+function toggleInlineNotation() {
+  inlineNotation = !inlineNotation;
+  saveUiSettings();
+  syncUiChrome();
+  renderMoves();
+}
+
+function toggleCoords() {
+  showCoords = !showCoords;
+  saveUiSettings();
+  syncUiChrome();
+  render();
+}
+
+function toggleVariationArrows() {
+  showVariationArrows = !showVariationArrows;
+  saveUiSettings();
+  drawArrows();
+  $("status").textContent = showVariationArrows ? "Variation arrows on" : "Variation arrows off";
+}
+
+function toggleZen() {
+  zenMode = !zenMode;
+  saveUiSettings();
+  syncUiChrome();
+}
+
+function updateAutoplayUi() {
+  const playing = !!autoplayTimer;
+  const label = playing ? "⏸ Pause" : "▶▶ Play";
+  const tool = $("toolAutoplay");
+  if (tool) {
+    tool.textContent = label;
+    tool.classList.toggle("active-style", playing);
+  }
+  const vcr = $("autoplay");
+  if (vcr) vcr.textContent = playing ? "⏸" : "▶▶";
+}
+
+function stopAutoplay() {
+  if (autoplayTimer) {
+    clearInterval(autoplayTimer);
+    autoplayTimer = null;
+  }
+  updateAutoplayUi();
+}
+
+function startAutoplay() {
+  if (pathIdx >= path.length - 1) {
+    $("status").textContent = "Already at end of line.";
+    return;
+  }
+  stopAutoplay();
+  autoplayTimer = setInterval(() => {
+    if (pathIdx >= path.length - 1) {
+      stopAutoplay();
+      return;
+    }
+    autoplaySilent = true;
+    goToPathIdx(pathIdx + 1);
+    autoplaySilent = false;
+  }, 800);
+  updateAutoplayUi();
+}
+
+function toggleAutoplay() {
+  if (autoplayTimer) stopAutoplay();
+  else startAutoplay();
+}
+
+function playTopExplorerMove() {
+  if (!explorerOpen) return false;
+  const row = $("explorerBody")?.querySelector(".explorer-row .san");
+  if (!row) return false;
+  const san = row.textContent;
+  if (!san) return false;
+  playExplorerSan(san);
+  return true;
+}
+
+function requestAnalyze() {
+  if (!engineOn) setEngineOn(true);
+  clearTimeout(analyzeTimer);
+  analyze();
+}
+
+function playBestMoveOrEnableEngine() {
+  if (!engineOn) {
+    requestAnalyze();
+    return;
+  }
+  if (game.isGameOver()) return;
+  // Prefer multipv lines[0], fall back to best_move (and vice versa).
+  const uci = lineFirstUci(0) || lastAnalysis?.best_move;
+  if (!uci || uci.length < 4) {
+    $("status").textContent = "No best move yet — wait for analysis.";
+    return;
+  }
+  hoverLineIdx = null;
+  clearHoverPvHighlight();
+  tryMove(uci.slice(0, 2), uci.slice(2, 4), uci[4] || undefined);
+}
+
+function formatExplorerGames(n) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1e4) return Math.round(n / 1e3) + "k";
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k";
+  return String(n);
+}
+
+function explorerMoveSan(fen, move) {
+  if (move?.san) return move.san;
+  if (move?.uci) return uciToSan(fen, move.uci);
+  return "?";
+}
+
+function playExplorerSan(san) {
+  if (!autoplaySilent) stopAutoplay();
+  const probe = new Chess(game.fen());
+  let mv;
+  try { mv = probe.move(san); } catch { mv = null; }
+  if (!mv) return;
+  selected = null;
+  lastMove = mv;
+  clearUserShapes();
+  pushMove(mv.san);
+  render();
+  scheduleAnalyze();
+}
+
+function setExplorerDb(db) {
+  if (db !== "masters" && db !== "lichess") return;
+  if (explorerDb === db) return;
+  explorerDb = db;
+  explorerFenKey = "";
+  $("explorerDbMasters").classList.toggle("active-style", db === "masters");
+  $("explorerDbLichess").classList.toggle("active-style", db === "lichess");
+  scheduleExplorerRefresh();
+}
+
+function setExplorerStatus(text, isError) {
+  const body = $("explorerBody");
+  body.innerHTML = "";
+  const div = document.createElement("div");
+  div.className = "explorer-status" + (isError ? " error" : "");
+  div.textContent = text;
+  body.appendChild(div);
+  $("explorerOpening").hidden = true;
+  $("explorerOpening").textContent = "";
+}
+
+function renderExplorerData(data, fen) {
+  const openingEl = $("explorerOpening");
+  const opening = data?.opening;
+  if (opening && (opening.name || opening.eco)) {
+    openingEl.hidden = false;
+    openingEl.innerHTML = "";
+    if (opening.eco) {
+      const eco = document.createElement("span");
+      eco.className = "eco";
+      eco.textContent = opening.eco;
+      openingEl.appendChild(eco);
+    }
+    if (opening.name) {
+      const label = opening.eco ? " " + opening.name : opening.name;
+      openingEl.appendChild(document.createTextNode(label));
+    }
+  } else {
+    openingEl.hidden = true;
+    openingEl.textContent = "";
+  }
+
+  const body = $("explorerBody");
+  body.innerHTML = "";
+  const moves = data?.moves || [];
+  if (!moves.length) {
+    const empty = document.createElement("div");
+    empty.className = "explorer-status";
+    empty.textContent = "No games in this database for this position.";
+    body.appendChild(empty);
+    return;
+  }
+
+  for (const m of moves) {
+    const white = m.white || 0;
+    const draws = m.draws || 0;
+    const black = m.black || 0;
+    const total = white + draws + black;
+    const san = explorerMoveSan(fen, m);
+    const row = document.createElement("div");
+    row.className = "explorer-row";
+    row.title = `Play ${san}`;
+
+    const sanEl = document.createElement("span");
+    sanEl.className = "san";
+    sanEl.textContent = san;
+
+    const bar = document.createElement("div");
+    bar.className = "explorer-bar";
+    if (total > 0) {
+      const w = document.createElement("div");
+      w.className = "w";
+      w.style.width = ((white / total) * 100) + "%";
+      w.title = `White ${(100 * white / total).toFixed(0)}%`;
+      const d = document.createElement("div");
+      d.className = "d";
+      d.style.width = ((draws / total) * 100) + "%";
+      d.title = `Draw ${(100 * draws / total).toFixed(0)}%`;
+      const b = document.createElement("div");
+      b.className = "b";
+      b.style.width = ((black / total) * 100) + "%";
+      b.title = `Black ${(100 * black / total).toFixed(0)}%`;
+      bar.appendChild(w);
+      bar.appendChild(d);
+      bar.appendChild(b);
+    }
+
+    const gamesEl = document.createElement("span");
+    gamesEl.className = "games";
+    gamesEl.textContent = formatExplorerGames(total);
+
+    row.appendChild(sanEl);
+    row.appendChild(bar);
+    row.appendChild(gamesEl);
+    row.onclick = () => playExplorerSan(san);
+    body.appendChild(row);
+  }
+}
+
+async function fetchExplorerJson(fen, database) {
+  const qs = `fen=${encodeURIComponent(fen)}&database=${encodeURIComponent(database)}`;
+  try {
+    const local = await fetch(`/explorer?${qs}`);
+    if (local.ok) return await local.json();
+    if (local.status !== 404) throw new Error(`Explorer ${local.status}`);
+  } catch (err) {
+    if (err && String(err.message || "").startsWith("Explorer ")) throw err;
+    // Network miss or missing proxy → public API.
+  }
+
+  const path = database === "lichess" ? "lichess" : "masters";
+  const url = `https://explorer.lichess.ovh/${path}?fen=${encodeURIComponent(fen)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Explorer ${res.status}`);
+  return await res.json();
+}
+
+function scheduleExplorerRefresh() {
+  if (!explorerOpen) return;
+  clearTimeout(explorerTimer);
+  explorerTimer = setTimeout(refreshExplorer, EXPLORER_DEBOUNCE_MS);
+}
+
+async function refreshExplorer() {
+  if (!explorerOpen) return;
+  const fen = game.fen();
+  const key = fen + "|" + explorerDb;
+  if (key === explorerFenKey) return;
+  const seq = ++explorerSeq;
+  setExplorerStatus("Loading…");
+  try {
+    const data = await fetchExplorerJson(fen, explorerDb);
+    if (seq !== explorerSeq || !explorerOpen) return;
+    explorerFenKey = key;
+    renderExplorerData(data, fen);
+  } catch {
+    if (seq !== explorerSeq || !explorerOpen) return;
+    explorerFenKey = "";
+    setExplorerStatus("Could not load opening explorer.", true);
+  }
+}
+
+function toggleExplorer() {
+  const el = $("explorer");
+  explorerOpen = !el.classList.contains("open");
+  el.classList.toggle("open", explorerOpen);
+  el.setAttribute("aria-hidden", explorerOpen ? "false" : "true");
+  if (explorerOpen) {
+    explorerFenKey = "";
+    scheduleExplorerRefresh();
+  } else {
+    clearTimeout(explorerTimer);
+    explorerTimer = null;
+  }
+}
+
+$("explorerDbMasters").onclick = () => setExplorerDb("masters");
+$("explorerDbLichess").onclick = () => setExplorerDb("lichess");
+
+function setHelpOpen(open) {
+  $("helpModal").classList.toggle("open", open);
+}
+
+function toggleHelp() {
+  setHelpOpen(!$("helpModal").classList.contains("open"));
+}
+
+$("helpClose").onclick = () => setHelpOpen(false);
+$("helpModal").addEventListener("click", e => {
+  if (e.target === $("helpModal")) setHelpOpen(false);
+});
+
 document.addEventListener("keydown", e => {
-  if (e.target.matches("textarea, input")) return;
-  if (e.key === "ArrowLeft") { e.preventDefault(); goTo(ply - 1); }
-  else if (e.key === "ArrowRight") { e.preventDefault(); goTo(ply + 1); }
-  else if (e.key === "f" || e.key === "F") { orientation = orientation === "w" ? "b" : "w"; render(); }
-  else if (e.key === "a" || e.key === "A") { clearTimeout(analyzeTimer); analyze(); }
+  const tag = (e.target && e.target.tagName) || "";
+  if (tag === "TEXTAREA" || tag === "INPUT") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  const key = e.key;
+  if (key === "Escape") {
+    if ($("analyse-cm").classList.contains("visible")) {
+      e.preventDefault();
+      closeMoveContextMenu();
+      return;
+    }
+    if ($("helpModal").classList.contains("open")) {
+      e.preventDefault();
+      setHelpOpen(false);
+      return;
+    }
+  }
+  if ((key === "ArrowLeft" || key === "k" || key === "K") && e.shiftKey) {
+    e.preventDefault();
+    enterOrExitVariation(false);
+  } else if ((key === "ArrowRight" || key === "j" || key === "J") && e.shiftKey) {
+    e.preventDefault();
+    enterOrExitVariation(true);
+  } else if (key === "ArrowUp") {
+    e.preventDefault();
+    cycleSiblingVariation(-1);
+  } else if (key === "ArrowDown") {
+    e.preventDefault();
+    cycleSiblingVariation(1);
+  } else if (key === "ArrowLeft" || key === "k" || key === "K") {
+    e.preventDefault();
+    goToPathIdx(pathIdx - 1);
+  } else if (key === "ArrowRight" || key === "j" || key === "J") {
+    e.preventDefault();
+    goToPathIdx(pathIdx + 1);
+  } else if (key === "Home" || key === "0") {
+    e.preventDefault();
+    goToPathIdx(0);
+  } else if (key === "End" || key === "$") {
+    e.preventDefault();
+    goToPathIdx(path.length - 1);
+  } else if (key === "f" || key === "F") {
+    e.preventDefault();
+    flipBoard();
+  } else if ((key === "a" || key === "A") && e.shiftKey) {
+    e.preventDefault();
+    requestAnalyze();
+  } else if ((key === "i" || key === "I") && e.shiftKey) {
+    e.preventDefault();
+    toggleInlineNotation();
+  } else if (key === "a" || key === "A") {
+    e.preventDefault();
+    toggleEngineArrows();
+  } else if (key === "v" || key === "V") {
+    e.preventDefault();
+    toggleVariationArrows();
+  } else if (key === "l" || key === "L") {
+    e.preventDefault();
+    toggleLocalEngine();
+  } else if (key === " " && e.shiftKey) {
+    e.preventDefault();
+    if (!playTopExplorerMove()) {
+      $("status").textContent = explorerOpen
+        ? "No explorer moves to play."
+        : "Open explorer (e) first.";
+    }
+  } else if (key === " ") {
+    e.preventDefault();
+    playBestMoveOrEnableEngine();
+  } else if (key === "p" || key === "P") {
+    e.preventDefault();
+    toggleAutoplay();
+  } else if (key === "z" || key === "Z") {
+    e.preventDefault();
+    toggleZen();
+  } else if (key === "x" || key === "X") {
+    e.preventDefault();
+    // Threat mode needs opponent-side ceval; /analyze is FEN-only — skip rather than fake it.
+    $("status").textContent = "Threat mode not implemented (needs opponent-side search).";
+  } else if (key === "e" || key === "E") {
+    e.preventDefault();
+    toggleExplorer();
+  } else if (key === "Backspace") {
+    e.preventDefault();
+    clearUserShapes();
+  } else if (key === "Delete") {
+    e.preventDefault();
+    if (pathIdx > 0) deleteFromHere(path[pathIdx]);
+  } else if (key === "?" || (key === "/" && e.shiftKey)) {
+    e.preventDefault();
+    toggleHelp();
+  }
+});
+document.addEventListener("mousedown", e => {
+  const cm = $("analyse-cm");
+  if (cm.classList.contains("visible") && !cm.contains(e.target)) closeMoveContextMenu();
 });
 document.addEventListener("mousemove", onDocumentMouseMove);
 document.addEventListener("mouseup", onDocumentMouseUp);
 
+applyUiSettingsFromStorage();
+syncUiChrome();
+updateEngineSimsHint();
+setEngineStatus(`On · ${simsValue()} sims`);
 initFromStart();
 refreshHealth();
 </script>

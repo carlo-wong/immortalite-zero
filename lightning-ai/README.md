@@ -1,6 +1,6 @@
 # Training Immortalite Zero on Lightning AI
 
-Self-play on a Lightning AI Studio GPU via `run_train.py` / `run_gate.py`. Same recipe as Colab (except 4 self-play workers), but checkpoints and Syzygy live in **sibling folders** you upload manually between sessions.
+Self-play on a Lightning AI Studio GPU via `run_train.py` / `run_gate.py` / `run_train_and_gate.py`. Same recipe as Colab (except 4 self-play workers), but checkpoints and Syzygy live in **sibling folders** you upload manually between sessions.
 
 ---
 
@@ -12,6 +12,7 @@ parent/
 │   └── lightning-ai/
 │       ├── run_train.py
 │       ├── run_gate.py
+│       ├── run_train_and_gate.py
 │       └── paths.py
 ├── results/                # upload before each session
 │   ├── latest.pt
@@ -58,11 +59,11 @@ Writes `latest.pt`, `metrics.csv`, shards every iteration to `../results/`. Trai
 
 ### Current `TRAIN` defaults
 
-Same recipe as Colab except `selfplay_workers=4` / `gate_workers=4` (Lightning T4 has 4 vCPUs; Colab is 2). Current row: iter **241** (`move_temperature=4` / 10 plies). See `colab/README.md` and `TRAINING_CHANGELOG.md`.
+Same recipe as Colab except `selfplay_workers=4` / `gate_workers=4` (Lightning T4 has 4 vCPUs; Colab is 2). Current row: iter **261** (`sims=150`, `move_temperature=4` / 10 plies). See `colab/README.md` and `TRAINING_CHANGELOG.md`.
 
 | Key | Value |
 |-----|-------|
-| `sims` | 100 |
+| `sims` | **150** (self-play) |
 | `games` | 128 |
 | `train_steps` | 800 |
 | `concurrency` | 128 |
@@ -71,13 +72,23 @@ Same recipe as Colab except `selfplay_workers=4` / `gate_workers=4` (Lightning T
 | `move_temperature` / `move_temperature_plies` | **4.0** / **10** (sampling only) |
 | `resign` | off |
 | `replay_buffer` / `replay_window` | 200k |
-| `gate_games` / `gate_sims` | 128 / 100 (manual gate only) |
+| `gate_games` / `gate_sims` | 128 / **100** (gates stay 100) |
 | `gate_exploration_moves` / `gate_openings` | 0 / masters (64×2 colors) |
 | `lr` / `lr_min` | 2.5e-4 flat |
-| Training span | auto-stops at iters 240, 260, … (multiples of 20) |
+| Training span | auto-stops at iters 260, 280, … (multiples of 20) |
 | `RESET_OPTIMIZER` | `False` |
 
-## Step 3 — Manual gate
+### Train + gate in one job
+
+```bash
+cd immortalite-zero
+nohup python lightning-ai/run_train_and_gate.py > ../results/train_and_gate.log 2>&1 &
+tail -f ../results/train_and_gate.log
+```
+
+Trains from `latest.pt` through the next multiple of 20, then gates that checkpoint vs **−20** (e.g. 261–280 train → gate 280 vs 260). Uses `TRAIN["gate_sims"]` for the match.
+
+## Step 3 — Manual gate only
 
 Edit `CHECKPOINT_A` / `CHECKPOINT_B` in `lightning-ai/run_gate.py` (int or `"latest"`):
 
