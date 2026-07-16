@@ -116,6 +116,9 @@ Resume keeps **checkpoint net architecture** (8×96, 51 value bins). Fresh net o
 
 - Same recipe as root_q row, plus early-ply **move sampling temperature T=4 for first 10 plies** (`--move-temperature 4 --move-temperature-plies 10`).
 - Sampling only during exploration plies; stored policy targets stay untempered. Gate exploration / gate temperature unchanged.
-- Each self-play iter appends `metrics_first_moves.csv` (`iter,n,entropy,d3_share,a4_share,main_share,top1_uci,top1_share`) and prints a one-liner.
+- Each self-play iter appends `metrics_first_moves.csv`:
+  `iter,n,entropy,top1..top5_uci/share,main_share,flank_share`
+  (`main`={e4,d4,Nf3,c4}; `flank`=wing/fianchetto set). An older CSV header is rotated to
+  `metrics_first_moves_legacy.csv` on first write after upgrade.
 
 Last updated: 2026-07-15.

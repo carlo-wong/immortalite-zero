@@ -16,23 +16,50 @@ import numpy as np
 
 from .encoding import board_to_planes
 
+# Classical first moves (human book-ish).
 MAIN = frozenset({"e2e4", "d2d4", "g1f3", "c2c4"})
+# Wing / fianchetto / rook-pawn starts (excludes MAIN and quiet d2d3/e2e3).
+FLANK = frozenset({
+    "a2a3", "a2a4", "h2h3", "h2h4",
+    "b2b3", "b2b4", "g2g3", "g2g4",
+    "b1a3", "b1c3", "g1h3",
+})
+
+# Schema: top-5 moves + category shares (no move-specific collapse columns).
+CSV_COLUMNS = (
+    "iter",
+    "n",
+    "entropy",
+    "top1_uci",
+    "top1_share",
+    "top2_uci",
+    "top2_share",
+    "top3_uci",
+    "top3_share",
+    "top4_uci",
+    "top4_share",
+    "top5_uci",
+    "top5_share",
+    "main_share",
+    "flank_share",
+)
 
 _START_PLANES: np.ndarray | None = None
 _NEXT_FPS: dict[str, np.ndarray] | None = None
 
 
 def _empty_stats() -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "n": 0,
         "entropy": float("nan"),
-        "d3_share": float("nan"),
-        "a4_share": float("nan"),
         "main_share": float("nan"),
-        "top1_uci": "",
-        "top1_share": float("nan"),
+        "flank_share": float("nan"),
         "counts": {},
     }
+    for i in range(1, 6):
+        out[f"top{i}_uci"] = ""
+        out[f"top{i}_share"] = float("nan")
+    return out
 
 
 def shannon(counts: Counter) -> float:
@@ -69,17 +96,20 @@ def summarize_first_moves(moves: list[str | None]) -> dict[str, Any]:
         return _empty_stats()
     counts = Counter(valid)
     n = len(valid)
-    top1_uci, top1_n = counts.most_common(1)[0]
-    return {
+    ranked = counts.most_common(5)
+    while len(ranked) < 5:
+        ranked.append(("", 0))
+    out: dict[str, Any] = {
         "n": n,
         "entropy": shannon(counts),
-        "d3_share": counts.get("d2d3", 0) / n,
-        "a4_share": counts.get("a2a4", 0) / n,
         "main_share": sum(counts[m] for m in MAIN) / n,
-        "top1_uci": top1_uci,
-        "top1_share": top1_n / n,
+        "flank_share": sum(counts[m] for m in FLANK) / n,
         "counts": dict(counts),
     }
+    for i, (uci, cnt) in enumerate(ranked, start=1):
+        out[f"top{i}_uci"] = uci
+        out[f"top{i}_share"] = cnt / n
+    return out
 
 
 def recover_first_moves_from_shard(path: str | Path) -> list[str | None]:

@@ -30,6 +30,7 @@ from tqdm.auto import tqdm
 from .config import Config, NetConfig
 from .encoding import ENCODING_VERSION
 from .first_move_stats import (
+    CSV_COLUMNS as FIRST_MOVE_CSV_COLUMNS,
     summarize_first_moves,
     summarize_first_moves_from_shard,
 )
@@ -300,32 +301,55 @@ def _log_step_metrics(ckpt_dir: str, it: int, step: int, metrics: dict[str, floa
 
 
 def _log_first_move_metrics(ckpt_dir: str, it: int, stats: dict) -> None:
-    """Append first-move diversity row and print a one-liner."""
+    """Append first-move diversity row (top-5 + main/flank) and print a one-liner.
+
+    If an older CSV header is present, rename it to ``*_legacy.csv`` and start fresh.
+    """
     os.makedirs(ckpt_dir or ".", exist_ok=True)
     path = os.path.join(ckpt_dir, "metrics_first_moves.csv")
-    new = not os.path.exists(path)
+    header = ",".join(FIRST_MOVE_CSV_COLUMNS)
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            existing = f.readline().strip()
+        if existing and existing != header:
+            legacy = os.path.join(ckpt_dir, "metrics_first_moves_legacy.csv")
+            os.replace(path, legacy)
+            print(f"first-moves: rotated old CSV → {legacy}", flush=True)
+
     n = int(stats.get("n", 0) or 0)
     entropy = float(stats.get("entropy", float("nan")))
-    d3 = float(stats.get("d3_share", float("nan")))
-    a4 = float(stats.get("a4_share", float("nan")))
     main = float(stats.get("main_share", float("nan")))
-    top1_uci = str(stats.get("top1_uci", "") or "")
-    top1_share = float(stats.get("top1_share", float("nan")))
+    flank = float(stats.get("flank_share", float("nan")))
+    tops: list[tuple[str, float]] = []
+    for i in range(1, 6):
+        tops.append((
+            str(stats.get(f"top{i}_uci", "") or ""),
+            float(stats.get(f"top{i}_share", float("nan"))),
+        ))
 
     def _fmt(x: float) -> str:
         return f"{x:.6f}" if math.isfinite(x) else "nan"
 
+    def _top_note(uci: str, share: float) -> str:
+        if uci and math.isfinite(share):
+            return f"{uci}:{share:.2f}"
+        return "none"
+
+    new = not os.path.exists(path)
     with open(path, "a", encoding="utf-8") as f:
         if new:
-            f.write("iter,n,entropy,d3_share,a4_share,main_share,top1_uci,top1_share\n")
-        f.write(
-            f"{it},{n},{_fmt(entropy)},{_fmt(d3)},{_fmt(a4)},{_fmt(main)},"
-            f"{top1_uci},{_fmt(top1_share)}\n"
-        )
-    top1_note = f"{top1_uci}:{top1_share:.2f}" if top1_uci and math.isfinite(top1_share) else "none"
+            f.write(header + "\n")
+        parts = [str(it), str(n), _fmt(entropy)]
+        for uci, share in tops:
+            parts.extend([uci, _fmt(share)])
+        parts.extend([_fmt(main), _fmt(flank)])
+        f.write(",".join(parts) + "\n")
+    top_bits = " ".join(
+        f"top{i}={_top_note(uci, share)}" for i, (uci, share) in enumerate(tops, start=1)
+    )
     print(
-        f"first-moves: H={_fmt(entropy)} d3={_fmt(d3)} a4={_fmt(a4)} "
-        f"main={_fmt(main)} top1={top1_note} (n={n})",
+        f"first-moves: H={_fmt(entropy)} {top_bits} "
+        f"main={_fmt(main)} flank={_fmt(flank)} (n={n})",
         flush=True,
     )
 

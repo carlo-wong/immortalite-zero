@@ -107,6 +107,32 @@ def test_first_move_stats_missing_path() -> None:
 def test_first_move_stats_empty_list() -> None:
     stats = summarize_first_moves([])
     assert stats["n"] == 0
+    assert stats["top1_uci"] == ""
+
+
+def test_first_move_stats_top5_and_categories() -> None:
+    stats = summarize_first_moves(
+        ["e2e4"] * 40
+        + ["d2d4"] * 25
+        + ["a2a4"] * 15
+        + ["d2d3"] * 12
+        + ["c2c4"] * 8
+    )
+    assert stats["n"] == 100
+    assert stats["top1_uci"] == "e2e4"
+    assert abs(stats["top1_share"] - 0.40) < 1e-9
+    assert stats["top2_uci"] == "d2d4"
+    assert abs(stats["top2_share"] - 0.25) < 1e-9
+    assert stats["top3_uci"] == "a2a4"
+    assert abs(stats["top3_share"] - 0.15) < 1e-9
+    assert stats["top4_uci"] == "d2d3"
+    assert abs(stats["top4_share"] - 0.12) < 1e-9
+    assert stats["top5_uci"] == "c2c4"
+    assert abs(stats["top5_share"] - 0.08) < 1e-9
+    assert abs(stats["main_share"] - 0.73) < 1e-9  # e4+d4+c4
+    assert abs(stats["flank_share"] - 0.15) < 1e-9  # a4
+    assert "d3_share" not in stats
+    assert "a4_share" not in stats
 
 
 @pytest.mark.skipif(not _SHARD_0240.is_file(), reason="samples_iter_0240.npz not present")
@@ -114,16 +140,10 @@ def test_first_move_stats_from_shard_0240() -> None:
     stats = summarize_first_moves_from_shard(_SHARD_0240)
     assert stats["n"] > 0
     assert stats["entropy"] >= 0.0
-    for key in (
-        "n",
-        "entropy",
-        "d3_share",
-        "a4_share",
-        "main_share",
-        "top1_uci",
-        "top1_share",
-        "counts",
-    ):
+    keys = ["n", "entropy", "main_share", "flank_share", "counts"]
+    for i in range(1, 6):
+        keys.extend([f"top{i}_uci", f"top{i}_share"])
+    for key in keys:
         assert key in stats
     assert isinstance(stats["counts"], dict)
     assert stats["top1_uci"]
