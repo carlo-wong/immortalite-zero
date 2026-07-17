@@ -143,7 +143,7 @@ class MCTS:
         if not mapping:
             return float(value)
         idxs = list(mapping.keys())
-        priors = _softmax(np.array([logits[i] for i in idxs], dtype=np.float32))
+        priors = _softmax(np.take(logits, idxs).astype(np.float32, copy=False))
         for i, p in zip(idxs, priors):
             node.children[i] = _Node(float(p), move=mapping[i])
         return float(value)
@@ -170,7 +170,11 @@ class MCTS:
             path = [root]
             depth = 0
 
-            is_terminal, _ = self._terminal_eval(node, board, root_turn)
+            # Root is already known non-terminal (checked before the sims loop).
+            # Keep terminal_value from the leaf check so we do not re-call
+            # _terminal_eval on the same (node, board) after the while.
+            is_terminal = False
+            terminal_value = 0.0
             while node.expanded and not is_terminal:
                 idx, child = self._select_child(node)
                 move = child.move
@@ -182,9 +186,8 @@ class MCTS:
                 depth += 1
                 node = child
                 path.append(node)
-                is_terminal, _ = self._terminal_eval(node, board, root_turn)
+                is_terminal, terminal_value = self._terminal_eval(node, board, root_turn)
 
-            is_terminal, terminal_value = self._terminal_eval(node, board, root_turn)
             if is_terminal:
                 value = terminal_value
             else:

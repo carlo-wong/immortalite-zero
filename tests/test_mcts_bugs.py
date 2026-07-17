@@ -8,6 +8,12 @@ from engine.encoding import POLICY_SIZE, legal_move_indices
 from engine.mcts import MCTS, SearchResult, _Node, _softmax
 
 
+# Fool's mate: black to move is checkmated.
+_FOOLS_MATE_FEN = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
+# Stalemate (black to move, no legal moves, not in check).
+_STALEMATE_FEN = "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1"
+
+
 class FixedLogitEvaluator:
     def __init__(self, logits: np.ndarray, value: float = 0.0):
         self.logits = logits.astype(np.float32)
@@ -179,3 +185,133 @@ def test_improved_policy_entropy_and_prior_ordering() -> None:
     assert int(np.argmax(policy_eq)) == int(np.argmax(skewed_priors)), (
         "With equal q_values, improved_policy argmax must match prior argmax"
     )
+
+
+def test_expand_from_eval_priors_match_taken_logits() -> None:
+    """np.take path must match the prior softmax of legal-move logits."""
+    board = chess.Board()
+    mapping = legal_move_indices(board)
+    logits = np.linspace(-2.0, 2.0, POLICY_SIZE, dtype=np.float32)
+
+    mcts = MCTS(None, Config().mcts)
+    root = _Node(0.0)
+    value = mcts._expand_from_eval(root, board, logits, 0.25)
+
+    assert value == 0.25
+    assert set(root.children) == set(mapping)
+    idxs = list(mapping.keys())
+    expected = _softmax(np.array([logits[i] for i in idxs], dtype=np.float32))
+    got = np.array([root.children[i].prior for i in idxs], dtype=np.float32)
+    assert np.allclose(got, expected, atol=1e-6)
+    for i, move in mapping.items():
+        assert root.children[i].move == move
+
+
+def test_expand_from_eval_empty_mapping_is_noop() -> None:
+    board = chess.Board(_STALEMATE_FEN)
+    assert not any(board.legal_moves)
+    mcts = MCTS(None, Config().mcts)
+    root = _Node(0.0)
+    logits = np.zeros(POLICY_SIZE, dtype=np.float32)
+    assert mcts._expand_from_eval(root, board, logits, -0.5) == -0.5
+    assert root.children == {}
+
+
+def test_search_gen_terminal_root_returns_without_yield() -> None:
+    board = chess.Board(_FOOLS_MATE_FEN)
+    assert board.is_checkmate()
+    mcts = MCTS(None, Config().mcts)
+    gen = mcts.search_gen(board, simulations=8, add_noise=False)
+    try:
+        next(gen)
+        raise AssertionError("terminal root must not yield for NN eval")
+    except StopIteration as stop:
+        result = stop.value
+    assert result.moves == []
+    assert result.root_value == -1.0
+
+
+def test_search_backs_up_checkmate_leaf_value() -> None:
+    """Leaf mate must backup -1; each node runs the uncached terminal check once."""
+    # White mates with Qa8#.
+    board = chess.Board("6k1/8/6K1/8/8/8/8/7Q w - - 0 1")
+    assert not board.is_game_over()
+    mapping = legal_move_indices(board)
+    logits = np.full(POLICY_SIZE, -8.0, dtype=np.float32)
+    mate_idx = next(i for i, m in mapping.items() if m.uci() == "h1a8")
+    logits[mate_idx] = 8.0
+
+    mcts = MCTS(FixedLogitEvaluator(logits, value=0.0), Config().mcts)
+    uncached_nodes: list[int] = []
+    real_terminal_eval = mcts._terminal_eval
+
+    def counting_terminal_eval(node, b, root_turn):
+        if not node.terminal_checked:
+            uncached_nodes.append(id(node))
+        return real_terminal_eval(node, b, root_turn)
+
+    mcts._terminal_eval = counting_terminal_eval  # type: ignore[method-assign]
+    result = mcts.run(board, simulations=16, add_noise=False)
+
+    assert len(uncached_nodes) == len(set(uncached_nodes)), (
+        "uncached _terminal_eval must run at most once per node"
+    )
+
+    mate_child = result._root.children[mate_idx]
+    assert mate_child.is_terminal
+    assert mate_child.terminal_value == -1.0
+    assert mate_child.N > 0
+    assert mate_child.W < 0.0
+    assert id(mate_child) in uncached_nodes
+
+
+def test_terminal_eval_once_per_sim_on_forced_mate_child() -> None:
+    """Deduped loop: 1 root check + 1 leaf check per sim (no post-while re-check)."""
+    board = chess.Board("6k1/8/6K1/8/8/8/8/7Q w - - 0 1")
+    mapping = legal_move_indices(board)
+    logits = np.full(POLICY_SIZE, -8.0, dtype=np.float32)
+    mate_idx = next(i for i, m in mapping.items() if m.uci() == "h1a8")
+    logits[mate_idx] = 8.0
+
+    sims = 12
+    mcts = MCTS(FixedLogitEvaluator(logits, value=0.0), Config().mcts)
+    calls = {"n": 0}
+    real_terminal_eval = mcts._terminal_eval
+    real_select = mcts._select_child
+
+    def counting_terminal_eval(node, b, root_turn):
+        calls["n"] += 1
+        return real_terminal_eval(node, b, root_turn)
+
+    def always_mate(node):
+        return mate_idx, node.children[mate_idx]
+
+    mcts._terminal_eval = counting_terminal_eval  # type: ignore[method-assign]
+    mcts._select_child = always_mate  # type: ignore[method-assign]
+    result = mcts.run(board, simulations=sims, add_noise=False)
+    # Restore for safety if the instance is reused (it isn't).
+    mcts._select_child = real_select  # type: ignore[method-assign]
+
+    assert calls["n"] == 1 + sims
+    assert result._root.children[mate_idx].N == sims
+
+
+def test_search_stalemate_leaf_uses_draw_contempt() -> None:
+    board = chess.Board("7k/5Q2/6K1/8/8/8/8/8 w - - 0 1")
+    mapping = legal_move_indices(board)
+    stalemate_move = chess.Move.from_uci("f7e6")
+    assert stalemate_move in mapping.values()
+    logits = np.full(POLICY_SIZE, -8.0, dtype=np.float32)
+    stale_idx = next(i for i, m in mapping.items() if m == stalemate_move)
+    logits[stale_idx] = 8.0
+
+    cfg = Config().mcts
+    cfg.draw_contempt = 0.0
+    result = MCTS(FixedLogitEvaluator(logits), cfg).run(
+        board, simulations=12, add_noise=False
+    )
+    child = result._root.children[stale_idx]
+    assert child.is_terminal
+    assert child.terminal_value == 0.0
+    assert child.N > 0
+    assert abs(child.W) < 1e-9
