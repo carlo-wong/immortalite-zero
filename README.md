@@ -33,6 +33,8 @@ web/index.html          vanilla analysis GUI (no build step)
 web/react/              optional React + Chessground GUI (/app-react/)
 colab/train.ipynb       Google Colab training notebook
 colab/README.md         Colab step-by-step guide
+kaggle/train.ipynb      Kaggle GPU training notebook
+kaggle/README.md        Kaggle step-by-step guide
 lightning-ai/
   run_train.py          background training script
   run_gate.py           manual checkpoint gate script
@@ -70,28 +72,29 @@ python -m uvicorn server.app:app --port 8000
 
 | Platform | Path | Notes |
 |----------|------|-------|
-| **Google Colab** | `colab/train.ipynb` | Free GPU, Drive checkpoints, 1 GPU worker |
-| **Lightning AI** | `lightning-ai/run_train.py` | ~4h sessions, background-friendly |
+| **Google Colab** | `colab/train.ipynb` | Free GPU, Drive checkpoints, 2 workers |
+| **Kaggle** | `kaggle/train.ipynb` | Free GPU (~30h/week), Dataset persistence, 2 workers |
+| **Lightning AI** | `lightning-ai/run_train.py` | ~4h sessions, background-friendly, 4 workers |
 | **Local CPU** | `engine.train` | `--light` preset for smoke tests |
 
-See `colab/README.md` and `lightning-ai/README.md` for full workflows.
+See `colab/README.md`, `kaggle/README.md`, and `lightning-ai/README.md` for full workflows.
 
-### Current GPU recipe (Colab / Lightning)
+### Current GPU recipe (Colab / Kaggle / Lightning)
 
 These override the `--gpu` preset when passed on the CLI. Resume always keeps the **checkpoint architecture** (currently 8×96, 51 value bins).
 
-| Setting | Colab | Lightning |
-|---------|-------|-----------|
+| Setting | Colab / Kaggle | Lightning |
+|---------|----------------|-----------|
 | Games / iter | 128 | 128 |
 | Train steps / iter | 800 | 800 |
-| MCTS sims / move | 100 | 100 |
+| MCTS sims / move (self-play) | 150 | 150 |
 | Concurrency | 128 | 128 |
-| Self-play workers | 2 | 2 |
+| Self-play workers | 2 | 4 |
 | Replay buffer / window | 200k | 200k |
 | Draw penalty | 1/3 | 1/3 |
 | Resign | off | off |
 | LR | 2.5e-4 constant | 2.5e-4 constant |
-| Training span | stop at iters 160, 180, … | stop at iters 160, 180, … |
+| Training span | stop at iters 260, 280, … | stop at iters 260, 280, … |
 | In-loop gate | off | off |
 | Manual gate (SPRT cap) | 128 games | 128 games |
 | Manual gate sims | 100 | 100 |

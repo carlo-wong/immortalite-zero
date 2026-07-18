@@ -1,6 +1,6 @@
 # Training recipe changelog
 
-Resume from the listed **start iter** with the `TRAIN` settings below (`colab/train.ipynb` cell 6 or `lightning-ai/run_train.py`). Training-parameter changes were aligned to **every 20 iterations** so each gate compares against a checkpoint trained on the same recipe.
+Resume from the listed **start iter** with the `TRAIN` settings below (`colab/train.ipynb` cell 6, `kaggle/train.ipynb` cell 6, or `lightning-ai/run_train.py`). Training-parameter changes were aligned to **every 20 iterations** so each gate compares against a checkpoint trained on the same recipe.
 
 Gates run every 20 iters vs the checkpoint **20 iters ago**. Edit only the `TRAIN` dict when moving to a new row.
 
