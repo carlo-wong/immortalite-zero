@@ -153,10 +153,13 @@ def _write_board_planes(board: chess.Board, planes: np.ndarray) -> None:
             ep_m = chess.square_mirror(ep_square)
             planes[16, chess.square_rank(ep_m), chess.square_file(ep_m)] = 1.0
 
-    if board.is_repetition(2):
-        planes[17] = 1.0
+    # is_repetition(3) implies is_repetition(2); coalesce to one history walk
+    # in the common (no-rep) case and at most one when threefold holds.
     if board.is_repetition(3):
+        planes[17] = 1.0
         planes[18] = 1.0
+    elif board.is_repetition(2):
+        planes[17] = 1.0
     halfmove_norm = min(float(board.halfmove_clock) / 100.0, 1.0)
     planes[19] = halfmove_norm
 

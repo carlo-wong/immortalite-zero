@@ -294,6 +294,27 @@ def test_play_match_uncaps_max_game_moves_for_gates() -> None:
     assert recorded[0]["cfg"].train.max_game_moves == 10_000
 
 
+def test_play_match_pins_temperature_regardless_of_cfg() -> None:
+    """play_match must not inherit self-play move_temperature."""
+    recorded: list[dict] = []
+    net_a, net_b, cfg = _tiny_nets()
+    cfg.train.move_temperature = 4.0
+    cfg.train.move_temperature_plies = 10
+
+    with patch("engine.train.play_game_gen", side_effect=_make_fake_play_game_gen(recorded)):
+        play_match(
+            net_a, net_b, cfg, n_games=2, sims=2, device="cpu", exploration_moves=5,
+        )
+
+    assert len(recorded) == 2
+    for call in recorded:
+        gate_cfg = call["cfg"]
+        assert gate_cfg.train.move_temperature == pytest.approx(1.0)
+        assert gate_cfg.train.move_temperature_plies == 0
+        assert cfg.train.move_temperature == pytest.approx(4.0)
+        assert cfg.train.move_temperature_plies == 10
+
+
 def test_snapshot_at_iter_returns_path_when_present() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         snap_path = os.path.join(tmpdir, "ckpt_iter_0010.pt")

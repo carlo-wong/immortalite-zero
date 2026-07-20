@@ -231,6 +231,39 @@ def test_search_gen_terminal_root_returns_without_yield() -> None:
     assert result.root_value == -1.0
 
 
+def test_terminal_eval_calls_board_outcome_not_is_game_over(monkeypatch) -> None:
+    """_terminal_eval must resolve terminal state with a single board.outcome call."""
+    board = chess.Board(_FOOLS_MATE_FEN)
+    node = _Node(0.0)
+    mcts = MCTS(None, Config().mcts)
+
+    is_game_over_calls = {"n": 0}
+    original_is_game_over = chess.Board.is_game_over
+
+    def counted_is_game_over(self, *args, **kwargs):
+        is_game_over_calls["n"] += 1
+        return original_is_game_over(self, *args, **kwargs)
+
+    monkeypatch.setattr(chess.Board, "is_game_over", counted_is_game_over)
+    is_terminal, value = mcts._terminal_eval(node, board, chess.WHITE)
+
+    assert is_terminal
+    assert value == -1.0
+    assert is_game_over_calls["n"] == 0
+
+
+def test_collect_uses_child_move_not_index_to_move() -> None:
+    cfg = Config()
+    cfg.mcts.simulations = 8
+    board = chess.Board()
+    logits = np.zeros(POLICY_SIZE, dtype=np.float32)
+    mcts = MCTS(FixedLogitEvaluator(logits, value=0.0), cfg.mcts)
+    result = mcts.run(board, simulations=8, add_noise=False)
+    assert result.moves
+    for move, idx in zip(result.moves, result.indices):
+        assert result._root.children[idx].move == move
+
+
 def test_search_backs_up_checkmate_leaf_value() -> None:
     """Leaf mate must backup -1; each node runs the uncached terminal check once."""
     # White mates with Qa8#.

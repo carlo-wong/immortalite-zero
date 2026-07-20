@@ -16,6 +16,7 @@ from engine.selfplay import (
     _tablebase_adjudication,
     _termination_reason,
     play_game,
+    play_game_gen,
 )
 
 
@@ -163,6 +164,56 @@ def test_mcts_treats_claimable_draws_as_terminal() -> None:
         assert result.root_value == -cfg.mcts.draw_contempt
         assert len(result.moves) == 0
         assert evaluator.calls == 0
+
+
+def test_game_loop_claim_draw_matches_mcts_cfg() -> None:
+    """With claim_draw=False, a threefold start must still enter search."""
+    cfg = Config()
+    cfg.mcts.simulations = 2
+    cfg.mcts.claim_draw = False
+
+    board = _threefold_board()
+    assert not board.is_game_over(claim_draw=False)
+    assert board.is_game_over(claim_draw=True)
+
+    start_moves = [m.uci() for m in board.move_stack]
+    # max_game_moves counts plies from the start of the generator, so set it
+    # above the opening length + a couple of search plies.
+    cfg.train.max_game_moves = len(start_moves) + 2
+    ev = FakeEvaluator(value=0.0)
+    gen = play_game_gen(cfg, simulations=2, start_moves=start_moves)
+    req = next(gen)
+    while True:
+        logits, value = ev.evaluate(req.board)
+        try:
+            req = gen.send((logits, value))
+        except StopIteration as stop:
+            game = stop.value
+            break
+
+    assert ev.calls >= 1, "loop must not exit early with claim_draw=False"
+    assert game.termination == "max_moves"
+
+
+def test_game_loop_claim_draw_true_ends_on_threefold_start() -> None:
+    """Default claim_draw=True must still adjudicate threefold without searching."""
+    cfg = Config()
+    cfg.mcts.simulations = 2
+    cfg.mcts.claim_draw = True
+
+    board = _threefold_board()
+    start_moves = [m.uci() for m in board.move_stack]
+    cfg.train.max_game_moves = len(start_moves) + 10
+    ev = FakeEvaluator(value=0.0)
+    gen = play_game_gen(cfg, simulations=2, start_moves=start_moves)
+    try:
+        next(gen)
+        raise AssertionError("claimable threefold must terminate without NN eval")
+    except StopIteration as stop:
+        game = stop.value
+
+    assert ev.calls == 0
+    assert game.termination == "threefold_repetition"
 
 
 def test_tablebase_win_adjudication_assigns_plus_minus_one() -> None:

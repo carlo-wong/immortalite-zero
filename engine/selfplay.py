@@ -128,7 +128,7 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
             moves.append(uci)
             move_count += 1
 
-    while not board.is_game_over(claim_draw=True) and move_count < cfg.train.max_game_moves:
+    while not board.is_game_over(claim_draw=cfg.mcts.claim_draw) and move_count < cfg.train.max_game_moves:
         tb_termination, tb_winner = _tablebase_adjudication(board, tablebase, cfg.train.tb_max_pieces)
         if tb_termination == "tablebase_win":
             tablebase_winner = tb_winner
@@ -191,7 +191,7 @@ def play_game_gen(cfg: Config, simulations: int, *, add_noise: bool = True,
         moves.append(move.uci())
         move_count += 1
 
-    outcome = board.outcome(claim_draw=True)
+    outcome = board.outcome(claim_draw=cfg.mcts.claim_draw)
     resigned = resigned_winner is not None
     tablebase_win = tablebase_winner is not None
     hit_max_moves = move_count >= cfg.train.max_game_moves and outcome is None and not resigned
@@ -366,71 +366,102 @@ def _split_games(num_games: int, workers: int) -> list[int]:
     return [c for c in counts if c > 0]
 
 
+# Per-process state for persistent SelfplayWorkerPool workers (spawn-safe).
+_WORKER_STATE: dict[str, Any] = {}
+
+
+def _selfplay_worker_init(net_cfg_dict: dict, device: str, syzygy_path: str | None) -> None:
+    """Build + compile the net once per worker process."""
+    torch.set_num_threads(1)
+    net = ChessNet(NetConfig(**net_cfg_dict))
+    net.to(device).eval()
+    if device.startswith("cuda") and hasattr(torch, "compile"):
+        net = torch.compile(net, dynamic=True)
+    tablebase = None
+    if syzygy_path:
+        tablebase = chess.syzygy.open_tablebase(syzygy_path)
+    _WORKER_STATE.clear()
+    _WORKER_STATE["net"] = net
+    _WORKER_STATE["device"] = device
+    _WORKER_STATE["evaluator"] = NetEvaluator(net, device=device)
+    _WORKER_STATE["tablebase"] = tablebase
+    _WORKER_STATE["net_builds"] = 1
+
+
+def _load_worker_weights(weights_path: str) -> None:
+    net = _WORKER_STATE["net"]
+    device = _WORKER_STATE["device"]
+    state = torch.load(weights_path, map_location=device)
+    model_state = state["model"] if isinstance(state, dict) and "model" in state else state
+    net_module = getattr(net, "_orig_mod", net)
+    net_module.load_state_dict(model_state, strict=True)
+
+
+def _selfplay_worker_run(payload: dict) -> tuple[
+    list[Sample],
+    dict[str, int],
+    list[int],
+    list[int],
+]:
+    """Reload weights and play games using the process-local compiled net."""
+    n_games = int(payload["n_games"])
+    weights_path = str(payload["weights_path"])
+    cfg = _config_from_dict(payload["cfg_dict"])
+    sims = int(payload["sims"])
+    seed = int(payload["seed"])
+
+    random.seed(seed)
+    np.random.seed(seed % (2**32 - 1))
+    torch.manual_seed(seed)
+
+    _load_worker_weights(weights_path)
+    evaluator = _WORKER_STATE["evaluator"]
+    tablebase = _WORKER_STATE.get("tablebase")
+
+    samples: list[Sample] = []
+    termination_counts: Counter[str] = Counter()
+    game_lengths: list[int] = []
+    game_outcomes: list[int] = []
+    games_done = payload.get("games_done")
+
+    def _on_game(game: GameResult) -> None:
+        samples.extend(game.samples)
+        termination_counts[game.termination] += 1
+        game_lengths.append(len(game.samples))
+        game_outcomes.append(_winner_of_worker(game))
+        if games_done is not None:
+            games_done.value += 1
+
+    play_games_batched(
+        evaluator,
+        cfg,
+        simulations=sims,
+        num_games=n_games,
+        concurrency=n_games,
+        on_game_finished=_on_game,
+        tablebase=tablebase,
+    )
+    return samples, dict(termination_counts), game_lengths, game_outcomes
+
+
 def _selfplay_worker(payload: dict) -> tuple[
     list[Sample],
     dict[str, int],
     list[int],
     list[int],
 ]:
-    worker_id = int(payload["worker_id"])
-    n_games = int(payload["n_games"])
-    weights_path = str(payload["weights_path"])
-    net_cfg = NetConfig(**payload["net_cfg"])
-    cfg = _config_from_dict(payload["cfg_dict"])
-    sims = int(payload["sims"])
+    """One-shot worker: init net/compile, play, tear down (ephemeral pool path)."""
+    net_cfg = payload["net_cfg"]
     device = str(payload["device"])
     syzygy_path = payload.get("syzygy_path")
-    seed = int(payload["seed"])
-
-    torch.set_num_threads(1)
-    random.seed(seed)
-    np.random.seed(seed % (2**32 - 1))
-    torch.manual_seed(seed)
-
-    tablebase = None
-    if syzygy_path:
-        tablebase = chess.syzygy.open_tablebase(syzygy_path)
-
+    _selfplay_worker_init(net_cfg, device, syzygy_path)
     try:
-        net = ChessNet(net_cfg)
-        state = torch.load(weights_path, map_location=device)
-        model_state = state["model"] if isinstance(state, dict) and "model" in state else state
-        net.load_state_dict(model_state, strict=True)
-        net.to(device).eval()
-        # Match train.py workers=1 path: compile after load. Pool respawns each
-        # iter, so compile warms once per worker process (~once per train iter).
-        if device.startswith("cuda") and hasattr(torch, "compile"):
-            net = torch.compile(net, dynamic=True)
-
-        evaluator = NetEvaluator(net, device=device)
-        samples: list[Sample] = []
-        termination_counts: Counter[str] = Counter()
-        game_lengths: list[int] = []
-        game_outcomes: list[int] = []
-
-        games_done = payload.get("games_done")
-
-        def _on_game(game: GameResult) -> None:
-            samples.extend(game.samples)
-            termination_counts[game.termination] += 1
-            game_lengths.append(len(game.samples))
-            game_outcomes.append(_winner_of_worker(game))
-            if games_done is not None:
-                games_done.value += 1
-
-        play_games_batched(
-            evaluator,
-            cfg,
-            simulations=sims,
-            num_games=n_games,
-            concurrency=n_games,
-            on_game_finished=_on_game,
-            tablebase=tablebase,
-        )
-        return samples, dict(termination_counts), game_lengths, game_outcomes
+        return _selfplay_worker_run(payload)
     finally:
+        tablebase = _WORKER_STATE.get("tablebase")
         if tablebase is not None:
             tablebase.close()
+        _WORKER_STATE.clear()
 
 
 def _winner_of_worker(game: GameResult) -> int:
@@ -440,6 +471,109 @@ def _winner_of_worker(game: GameResult) -> int:
     if game.winner is None:
         return 0
     return 1 if game.winner == chess.WHITE else -1
+
+
+def _merge_worker_results(
+    results: list[tuple[list[Sample], dict[str, int], list[int], list[int]]],
+) -> tuple[list[Sample], Counter[str], list[int], list[int]]:
+    all_samples: list[Sample] = []
+    termination_counts: Counter[str] = Counter()
+    game_lengths: list[int] = []
+    game_outcomes: list[int] = []
+    for samples, term_dict, lengths, outcomes in results:
+        all_samples.extend(samples)
+        termination_counts.update(term_dict)
+        game_lengths.extend(lengths)
+        game_outcomes.extend(outcomes)
+    return all_samples, termination_counts, game_lengths, game_outcomes
+
+
+def _net_cfg_dict(net_cfg: NetConfig) -> dict:
+    return {
+        "blocks": net_cfg.blocks,
+        "filters": net_cfg.filters,
+        "value_bins": net_cfg.value_bins,
+    }
+
+
+class SelfplayWorkerPool:
+    """Long-lived spawn pool: compile once per worker, reload weights each iter."""
+
+    def __init__(
+        self,
+        workers: int,
+        net_cfg: NetConfig,
+        device: str,
+        syzygy_path: str | None = None,
+    ) -> None:
+        if workers <= 1:
+            raise ValueError("SelfplayWorkerPool requires workers > 1")
+        self.workers = workers
+        self._closed = False
+        self._ctx = mp.get_context("spawn")
+        self._manager = self._ctx.Manager()
+        self._games_done = self._manager.Value("i", 0)
+        net_cfg_dict = _net_cfg_dict(net_cfg)
+        self._pool = self._ctx.Pool(
+            processes=workers,
+            initializer=_selfplay_worker_init,
+            initargs=(net_cfg_dict, device, syzygy_path),
+        )
+
+    def run(
+        self,
+        cfg: Config,
+        weights_path: str,
+        simulations: int,
+        num_games: int,
+        on_progress: Callable[[int], None] | None = None,
+    ) -> tuple[list[Sample], Counter[str], list[int], list[int]]:
+        if self._closed:
+            raise RuntimeError("SelfplayWorkerPool is closed")
+        if num_games <= 0:
+            return [], Counter(), [], []
+
+        game_counts = _split_games(num_games, self.workers)
+        cfg_dict = _config_to_dict(cfg)
+        self._games_done.value = 0
+        payloads = []
+        for worker_id, n_worker_games in enumerate(game_counts):
+            seed = (os.getpid() * 2654435761 + worker_id * 1597334677 + int(time.time())) & 0xFFFFFFFF
+            payloads.append({
+                "worker_id": worker_id,
+                "n_games": n_worker_games,
+                "weights_path": weights_path,
+                "cfg_dict": cfg_dict,
+                "sims": simulations,
+                "seed": seed,
+                "games_done": self._games_done,
+            })
+
+        async_result = self._pool.map_async(_selfplay_worker_run, payloads)
+        while not async_result.ready():
+            if on_progress is not None:
+                on_progress(int(self._games_done.value))
+            time.sleep(0.2)
+        results = async_result.get()
+        if on_progress is not None:
+            on_progress(num_games)
+        return _merge_worker_results(results)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._pool.close()
+            self._pool.join()
+        finally:
+            self._manager.shutdown()
+
+    def __enter__(self) -> SelfplayWorkerPool:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
 
 def play_games_parallel(
@@ -453,6 +587,7 @@ def play_games_parallel(
     syzygy_path: str | None = None,
     on_progress: Callable[[int], None] | None = None,
 ) -> tuple[list[Sample], Counter[str], list[int], list[int]]:
+    """One-shot parallel self-play (ephemeral pool). Prefer SelfplayWorkerPool in train."""
     if num_games <= 0:
         return [], Counter(), [], []
     if workers <= 1:
@@ -460,11 +595,7 @@ def play_games_parallel(
 
     game_counts = _split_games(num_games, workers)
     cfg_dict = _config_to_dict(cfg)
-    net_cfg_dict = {
-        "blocks": net_cfg.blocks,
-        "filters": net_cfg.filters,
-        "value_bins": net_cfg.value_bins,
-    }
+    net_cfg_dict = _net_cfg_dict(net_cfg)
 
     payloads = []
     for worker_id, n_worker_games in enumerate(game_counts):
@@ -497,17 +628,7 @@ def play_games_parallel(
             if on_progress is not None:
                 on_progress(num_games)
 
-    all_samples: list[Sample] = []
-    termination_counts: Counter[str] = Counter()
-    game_lengths: list[int] = []
-    game_outcomes: list[int] = []
-    for samples, term_dict, lengths, outcomes in results:
-        all_samples.extend(samples)
-        termination_counts.update(term_dict)
-        game_lengths.extend(lengths)
-        game_outcomes.extend(outcomes)
-
-    return all_samples, termination_counts, game_lengths, game_outcomes
+    return _merge_worker_results(results)
 
 
 @dataclass

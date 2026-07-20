@@ -253,13 +253,28 @@ class MCTS:
         # self-play and avoids overvaluing claimable repetition/50-move draws.
         return board.is_game_over(claim_draw=self.cfg.claim_draw)
 
+    def _value_from_outcome(
+        self,
+        outcome: chess.Outcome,
+        board: chess.Board,
+        root_turn: chess.Color,
+    ) -> float:
+        if outcome.termination == chess.Termination.CHECKMATE:
+            return -1.0  # side to move has been mated
+        contempt = float(self.cfg.draw_contempt)
+        # Root-relative contempt: regardless of simulation depth parity, a draw
+        # backs up as a small negative value for the root side to move.
+        return -contempt if board.turn == root_turn else contempt
+
     def _terminal_eval(self, node: _Node, board: chess.Board, root_turn: chess.Color
                        ) -> tuple[bool, float]:
         if node.terminal_checked:
             return node.is_terminal, node.terminal_value
-        node.is_terminal = self._is_terminal(board)
-        if node.is_terminal:
-            node.terminal_value = self._terminal_value(board, root_turn)
+        # Single board.outcome() call — outcome() is None iff not terminal.
+        outcome = board.outcome(claim_draw=self.cfg.claim_draw)
+        node.is_terminal = outcome is not None
+        if outcome is not None:
+            node.terminal_value = self._value_from_outcome(outcome, board, root_turn)
         else:
             node.terminal_value = 0.0
         node.terminal_checked = True
@@ -272,18 +287,13 @@ class MCTS:
         outcome = board.outcome(claim_draw=self.cfg.claim_draw)
         if outcome is None:
             return 0.0
-        if outcome is not None and outcome.termination == chess.Termination.CHECKMATE:
-            return -1.0  # side to move has been mated
-        contempt = float(self.cfg.draw_contempt)
-        # Root-relative contempt: regardless of simulation depth parity, a draw
-        # backs up as a small negative value for the root side to move.
-        return -contempt if board.turn == root_turn else contempt
+        return self._value_from_outcome(outcome, board, root_turn)
 
     def _collect(self, root: _Node, board: chess.Board, root_value: float,
                  clean_priors: dict[int, float]) -> SearchResult:
         moves, indices, visits, qs, priors, clean = [], [], [], [], [], []
         for idx, child in root.children.items():
-            move = index_to_move(idx, board)
+            move = child.move
             if move is None:
                 continue
             moves.append(move)

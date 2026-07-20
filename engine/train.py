@@ -50,10 +50,10 @@ from .selfplay import (
     GATE_OPENING_PLIES,
     GameResult,
     Sample,
+    SelfplayWorkerPool,
     _opening_row,
     play_game_gen,
     play_games_batched,
-    play_games_parallel,
     play_match_parallel,
 )
 
@@ -588,6 +588,9 @@ def play_match(net_a: ChessNet, net_b: ChessNet, cfg: Config,
     # Disable resignation during strength evaluation matches
     match_cfg.train.resign_threshold = -1.1
     match_cfg.train.resign_plies = 0
+    # Never inherit self-play move temperature into strength gates.
+    match_cfg.train.move_temperature = 1.0
+    match_cfg.train.move_temperature_plies = 0
     if concurrency is not None:
         match_cfg.train.selfplay_concurrency = concurrency
 
@@ -1049,6 +1052,8 @@ def main() -> None:
         cfg.train.train_steps_per_iteration = args.train_steps
     if args.sims is not None:
         cfg.train.sims_per_move = args.sims
+        # Keep analyze/UCI default aligned with training sims (gates pass sims= explicitly).
+        cfg.mcts.simulations = args.sims
     if args.concurrency is not None:
         cfg.train.selfplay_concurrency = args.concurrency
     if args.replay_window is not None:
@@ -1190,6 +1195,14 @@ def main() -> None:
     # in-place updates from training are always visible; construct once to avoid
     # pinned-memory re-allocation on every iteration.
     evaluator = NetEvaluator(net, device=args.device)
+    selfplay_pool: SelfplayWorkerPool | None = None
+    if args.selfplay_workers > 1:
+        selfplay_pool = SelfplayWorkerPool(
+            workers=args.selfplay_workers,
+            net_cfg=cfg.net,
+            device=args.device,
+            syzygy_path=cfg.train.syzygy_path,
+        )
 
     try:
         for local_it in range(args.iterations):
@@ -1227,7 +1240,7 @@ def main() -> None:
                 game_bar.set_postfix(moves=len(game.samples), buffer=len(buffer))
                 game_bar.update(1)
 
-            if args.selfplay_workers > 1:
+            if selfplay_pool is not None:
                 worker_weights_path = os.path.join(cfg.train.checkpoint_dir, "_worker_net.pt")
                 os.makedirs(cfg.train.checkpoint_dir or ".", exist_ok=True)
                 model_module = getattr(net, "_orig_mod", net)
@@ -1237,15 +1250,11 @@ def main() -> None:
                     _tqdm_sync_progress(game_bar, completed)
 
                 parallel_samples, parallel_terms, parallel_lengths, parallel_outcomes = (
-                    play_games_parallel(
+                    selfplay_pool.run(
                         cfg,
-                        cfg.net,
                         worker_weights_path,
                         simulations=sims,
                         num_games=n_games,
-                        workers=args.selfplay_workers,
-                        device=args.device,
-                        syzygy_path=cfg.train.syzygy_path,
                         on_progress=_parallel_selfplay_progress,
                     )
                 )
@@ -1545,6 +1554,8 @@ def main() -> None:
                 except Exception as exc:
                     print(f"gate iter {it}: failed ({exc}); continuing", flush=True)
     finally:
+        if selfplay_pool is not None:
+            selfplay_pool.close()
         if tablebase is not None:
             tablebase.close()
 

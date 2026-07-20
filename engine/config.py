@@ -15,6 +15,7 @@ class NetConfig:
 
 @dataclass
 class MCTSConfig:
+    # Also set from engine.train --sims so analyze/UCI match training depth.
     simulations: int = 100          # raise for stronger/slower analysis
     c_puct: float = 1.5
     dirichlet_alpha: float = 0.3    # root exploration noise (self-play only)

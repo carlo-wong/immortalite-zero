@@ -123,6 +123,23 @@ def test_board_to_planes_matches_mirror_reference() -> None:
         assert np.array_equal(board_to_planes(board), _board_to_planes_via_mirror(board))
 
 
+def test_repetition_planes_coalesce_matches_two_separate_calls() -> None:
+    """Coalesced repetition logic must match two separate is_repetition calls."""
+    random.seed(42)
+    for _ in range(300):
+        board = chess.Board()
+        for _ in range(random.randint(0, 40)):
+            moves = list(board.legal_moves)
+            if not moves:
+                break
+            board.push(random.choice(moves))
+        planes = board_to_planes(board)
+        p17_ref = 1.0 if board.is_repetition(2) else 0.0
+        p18_ref = 1.0 if board.is_repetition(3) else 0.0
+        assert float(planes[17, 0, 0]) == p17_ref, f"plane 17 mismatch: {board.fen()}"
+        assert float(planes[18, 0, 0]) == p18_ref, f"plane 18 mismatch: {board.fen()}"
+
+
 def test_fill_planes_batch_matches_board_to_planes() -> None:
     random.seed(2)
     boards = [chess.Board()]
